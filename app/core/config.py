@@ -32,6 +32,7 @@ class Settings(BaseSettings):
     
     # Security Settings
     SECRET_KEY: str = "your-secret-key-change-in-production"
+    CORS_ORIGINS: str = "http://localhost:3000,http://localhost:8000"
     
     class Config:
         env_file = ".env"

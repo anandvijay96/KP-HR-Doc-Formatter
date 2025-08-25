@@ -1,0 +1,59 @@
+# Render Infrastructure-as-Code (IaC) for KP HR Doc Formatter
+# Defines services for web, worker, and Redis, all on free tiers.
+
+databases:
+  - name: kp-hr-redis
+    plan: free
+    databaseName: kphrredis # Optional but good practice
+    ipAllowList: [] # Keep empty to allow all Render services
+
+services:
+  - type: web
+    name: kp-hr-doc-formatter-backend
+    env: python
+    plan: free
+    buildCommand: "uv pip install -r requirements.txt"
+    startCommand: "uvicorn app.main:app --host 0.0.0.0 --port $PORT"
+    healthCheckPath: /health
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11
+      - key: REDIS_URL
+        fromDatabase:
+          name: kp-hr-redis
+          property: connectionString
+      - key: CELERY_BROKER_URL
+        fromDatabase:
+          name: kp-hr-redis
+          property: connectionString
+      - key: CELERY_RESULT_BACKEND
+        fromDatabase:
+          name: kp-hr-redis
+          property: connectionString
+      - key: SECRET_KEY
+        generateValue: true # Render will generate a secure secret
+      - key: CORS_ORIGINS # Change in production to your Netlify/Vercel URL
+        value: "https://your-netlify-site-name.netlify.app,https://your-vercel-site-name.vercel.app"
+
+  - type: worker
+    name: kp-hr-doc-formatter-worker
+    env: python
+    plan: free
+    buildCommand: "uv pip install -r requirements.txt"
+    startCommand: "celery -A app.services.celery_app.celery_app worker -l info"
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11
+      - key: REDIS_URL
+        fromDatabase:
+          name: kp-hr-redis
+          property: connectionString
+      - key: CELERY_BROKER_URL
+        fromDatabase:
+          name: kp-hr-redis
+          property: connectionString
+      - key: CELERY_RESULT_BACKEND
+        fromDatabase:
+          name: kp-hr-redis
+          property: connectionString
+
