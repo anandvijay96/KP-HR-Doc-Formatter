@@ -1,0 +1,72 @@
+services:
+  # Redis service for caching and job queue
+  redis:
+    image: redis:7-alpine
+    container_name: hr-formatter-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+    restart: unless-stopped
+
+  # Main application service
+  app:
+    build: .
+    container_name: hr-formatter-app
+    ports:
+      - "8000:8000"
+    environment:
+      - REDIS_URL=redis://redis:6379
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+      - ALLOWED_EXTENSIONS=[".doc",".docx",".pdf"]
+    volumes:
+      - ./uploads:/app/uploads
+      - ./output:/app/output
+      - ./templates:/app/templates
+      - ./logs:/app/logs
+    depends_on:
+      - redis
+    restart: unless-stopped
+
+  # Celery worker for background processing
+  celery-worker:
+    build: .
+    container_name: hr-formatter-worker
+    command: celery -A app.services.celery_app worker --loglevel=info
+    environment:
+      - REDIS_URL=redis://redis:6379
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+    volumes:
+      - ./uploads:/app/uploads
+      - ./output:/app/output
+      - ./templates:/app/templates
+      - ./logs:/app/logs
+    depends_on:
+      - redis
+    restart: unless-stopped
+
+  # Frontend service (optional - for development)
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: hr-formatter-frontend
+    ports:
+      - "3000:3000"
+    environment:
+      - VITE_API_URL=http://localhost:8000/api/v1
+    depends_on:
+      - app
+    restart: unless-stopped
+    profiles:
+      - frontend
+
+volumes:
+  redis_data:
+
+networks:
+  default:
+    name: hr-formatter-network

@@ -1,0 +1,48 @@
+services:
+  # Redis service for caching and job queue
+  redis:
+    image: redis:7-alpine
+    container_name: hr-formatter-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+    restart: unless-stopped
+
+  # Main application service (development mode)
+  app:
+    image: python:3.10-slim
+    container_name: hr-formatter-app
+    ports:
+      - "8000:8000"
+    environment:
+      - REDIS_URL=redis://redis:6379
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+      - PYTHONPATH=/app
+    volumes:
+      - .:/app
+      - ./uploads:/app/uploads
+      - ./output:/app/output
+      - ./templates:/app/templates
+    working_dir: /app
+    command: >
+      bash -c "
+        apt-get update && 
+        apt-get install -y tesseract-ocr tesseract-ocr-eng libreoffice libgl1-mesa-glx libglib2.0-0 libsm6 libxext6 libxrender-dev libgomp1 libgtk-3-0 curl &&
+        pip install -r requirements.txt &&
+        python -m spacy download en_core_web_sm &&
+        mkdir -p uploads output templates logs &&
+        uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+      "
+    depends_on:
+      - redis
+    restart: unless-stopped
+
+volumes:
+  redis_data:
+
+networks:
+  default:
+    name: hr-formatter-network

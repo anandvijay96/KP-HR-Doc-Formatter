@@ -1,0 +1,566 @@
+import os
+import uuid
+from pathlib import Path
+from typing import Dict, Any, Optional, List
+from docx import Document
+from docxtpl import DocxTemplate
+import json
+from datetime import datetime
+import logging
+import re
+
+from app.core.config import settings
+from app.models.schemas import ExtractedData, TemplateInfo
+from app.services.ezest_template_creator import EZestTemplateCreator
+from app.services.working_ezest_template import WorkingEZestTemplateCreator
+
+class TemplateEngine:
+    """Template management and document generation engine"""
+    
+    def __init__(self):
+        self.templates_dir = Path(settings.TEMPLATES_DIR)
+        self.output_dir = Path(settings.OUTPUT_DIR)
+        self.last_warnings: List[str] = []
+        
+        # Ensure directories exist
+        self.templates_dir.mkdir(exist_ok=True)
+        self.output_dir.mkdir(exist_ok=True)
+        
+        # Keep only a single main template to simplify debugging
+        self._prune_templates_to_main()
+        
+        # Ensure an updated e-Zest template with summary bullets is available
+        self._ensure_ezest_updated_bullets_template()
+    
+    def _create_default_template(self):
+        """Create a default template if none exists"""
+        default_template_path = self.templates_dir / "default.docx"
+        
+        if not default_template_path.exists():
+            # Create a basic template document
+            doc = Document()
+            
+            # Add template placeholders
+            doc.add_heading('{{contact_info.name}}', 0)
+            
+            # Contact information
+            contact_para = doc.add_paragraph()
+            contact_para.add_run('Email: {{contact_info.email}} | ')
+            contact_para.add_run('Phone: {{contact_info.phone}}')
+            if '{{contact_info.address}}':
+                contact_para.add_run(' | {{contact_info.address}}')
+            
+            # Professional Summary
+            doc.add_heading('Professional Summary', level=1)
+            doc.add_paragraph('{{summary}}')
+            
+            # Experience Section
+            doc.add_heading('Professional Experience', level=1)
+            doc.add_paragraph('''
+{%- for exp in experience %}
+{{ exp.title }} - {{ exp.company }}
+{{ exp.start_date }} - {{ exp.end_date }}
+{{ exp.description }}
+
+{%- endfor %}
+            '''.strip())
+            
+            # Education Section
+            doc.add_heading('Education', level=1)
+            doc.add_paragraph('''
+{%- for edu in education %}
+{{ edu.degree }}
+{{ edu.institution }}
+{{ edu.graduation_date }}
+
+{%- endfor %}
+            '''.strip())
+            
+            # Skills Section
+            doc.add_heading('Skills', level=1)
+            doc.add_paragraph('{{ skills | join(", ") }}')
+            
+            doc.save(default_template_path)
+    
+    def _create_ezest_template(self):
+        """Create improved e-Zest template if it doesn't exist"""
+        ezest_template_path = self.templates_dir / "ezest.docx"
+        
+        if not ezest_template_path.exists():
+            try:
+                # Use working template creator
+                creator = WorkingEZestTemplateCreator()
+                creator.create_template(ezest_template_path)
+                logging.info("Working e-Zest template created successfully")
+            except Exception as e:
+                logging.error(f"Failed to create working e-Zest template: {str(e)}")
+                # Fallback to original creator
+                try:
+                    creator = EZestTemplateCreator(self.templates_dir)
+                    creator.create_ezest_template()
+                    logging.info("Fallback e-Zest template created successfully")
+                except Exception as fallback_e:
+                    logging.error(f"Failed to create fallback e-Zest template: {str(fallback_e)}")
+    
+    def get_template_info(self, template_id: str) -> Optional[TemplateInfo]:
+        """Get template information"""
+        if template_id == "default":
+            return TemplateInfo(
+                id="default",
+                name="Default Agency Template",
+                description="Standard professional resume format",
+                version="1.0",
+                fields=["contact_info", "summary", "experience", "education", "skills"]
+            )
+        elif template_id == "ezest":
+            return TemplateInfo(
+                id="ezest",
+                name="e-Zest Professional Template",
+                description="Professional e-Zest formatted resume with proper fonts and spacing",
+                version="1.0",
+                fields=["contact_info", "summary", "experience", "education", "skills"]
+            )
+        elif template_id == "ezest-updated":
+            return TemplateInfo(
+                id="ezest-updated",
+                name="e-Zest Updated Template",
+                description="Updated e-Zest template with bulletized summary",
+                version="1.0",
+                fields=["contact_info", "summary", "summary_bullets", "experience", "education", "skills"]
+            )
+        elif template_id == "ezest-updated-bullets":
+            return TemplateInfo(
+                id="ezest-updated-bullets",
+                name="e-Zest Updated Template (Bullets)",
+                description="e-Zest template variant rendering summary_bullets in a loop",
+                version="1.0",
+                fields=["contact_info", "summary", "summary_bullets", "experience", "education", "skills"]
+            )
+        
+        # Check for custom templates
+        template_path = self.templates_dir / f"{template_id}.docx"
+        if template_path.exists():
+            return TemplateInfo(
+                id=template_id,
+                name=f"Custom Template {template_id}",
+                description="Custom agency template",
+                version="1.0",
+                fields=["contact_info", "summary", "experience", "education", "skills"]
+            )
+        
+        return None
+    
+    def list_templates(self) -> List[TemplateInfo]:
+        """List only the main template to simplify debugging."""
+        # Ensure main exists
+        try:
+            self._ensure_ezest_updated_bullets_template()
+        except Exception:
+            pass
+        
+        templates: List[TemplateInfo] = []
+        main_path = self.templates_dir / "ezest-updated.docx"
+        if main_path.exists():
+            main = self.get_template_info("ezest-updated")
+            if main:
+                templates.append(main)
+        return templates
+    
+    def apply_template(self, extracted_data: ExtractedData, template_id: str) -> str:
+        """Apply template to extracted data and generate formatted document"""
+        try:
+            self.last_warnings = []
+            template_path = self.templates_dir / f"{template_id}.docx"
+            
+            if not template_path.exists():
+                raise FileNotFoundError(f"Template not found: {template_id}")
+            
+            # Load template
+            template = DocxTemplate(template_path)
+            
+            # Prepare context data
+            context = self._prepare_template_context(extracted_data)
+            
+            # Simple required content checks and warnings
+            self._collect_warnings(context)
+            
+            # Render template
+            template.render(context)
+            
+            # Generate output filename
+            output_filename = f"formatted_{uuid.uuid4().hex[:8]}_{template_id}.docx"
+            output_path = self.output_dir / output_filename
+            
+            # Save rendered document
+            template.save(output_path)
+            
+            return output_filename
+            
+        except Exception as e:
+            logging.error(f"Template application failed: {str(e)}")
+            raise ValueError(f"Failed to apply template: {str(e)}")
+    
+    def _prepare_template_context(self, extracted_data: ExtractedData) -> Dict[str, Any]:
+        """Prepare context data for template rendering"""
+        # Bulletize summary into list items suitable for templating
+        bullets = self._bulletize_summary(extracted_data.summary or '')
+        context = {
+            'contact_info': {
+                'name': extracted_data.contact_info.name or 'N/A',
+                'email': extracted_data.contact_info.email or 'N/A',
+                'phone': extracted_data.contact_info.phone or 'N/A',
+                'address': extracted_data.contact_info.address or '',
+                'linkedin': extracted_data.contact_info.linkedin or '',
+                'website': extracted_data.contact_info.website or ''
+            },
+'summary': extracted_data.summary or 'Professional summary not available.',
+            'summary_bullets': bullets,
+            'experience': [],
+            'education': [],
+            'skills': extracted_data.skills or []
+        }
+        
+        # Process experience data
+        for exp in extracted_data.experience:
+            experience_item = {
+                'title': exp.title or 'Position Title',
+                'company': exp.company or 'Company Name',
+                'location': exp.location or '',
+                'start_date': exp.start_date or 'Start Date',
+                'end_date': exp.end_date or 'End Date',
+                'description': exp.description or 'Job description not available.',
+                'is_current': exp.is_current
+            }
+            context['experience'].append(experience_item)
+        
+        # Process education data
+        for edu in extracted_data.education:
+            education_item = {
+                'degree': edu.degree or 'Degree',
+                'institution': edu.institution or 'Institution',
+                'location': edu.location or '',
+                'graduation_date': edu.graduation_date or 'Graduation Date',
+                'gpa': edu.gpa or '',
+                'honors': edu.honors or ''
+            }
+            context['education'].append(education_item)
+        
+        return context
+    
+    def validate_template(self, template_path: Path) -> Dict[str, Any]:
+        """Validate template structure and required fields"""
+        try:
+            template = DocxTemplate(template_path)
+            
+            # Prepare a comprehensive sample context to validate placeholders
+            sample_context: Dict[str, Any] = {
+                'contact_info': {
+                    'name': 'John Doe',
+                    'email': 'john.doe@example.com',
+                    'phone': '+1-555-123-4567',
+                    'address': '123 Main St, City',
+                    'linkedin': 'linkedin.com/in/johndoe',
+                    'website': 'johndoe.dev',
+                },
+                'summary': 'Seasoned professional with expertise in ...',
+                'experience': [
+                    {
+                        'title': 'Senior Developer',
+                        'company': 'Acme Corp',
+                        'location': 'Remote',
+                        'start_date': 'Jan 2020',
+                        'end_date': 'Present',
+                        'description': 'Built things',
+                        'is_current': True,
+                    }
+                ],
+                'education': [
+                    {
+                        'degree': 'B.Sc. Computer Science',
+                        'institution': 'Tech University',
+                        'location': 'City',
+                        'graduation_date': '2018',
+                        'gpa': '3.9',
+                        'honors': 'Summa Cum Laude',
+                    }
+                ],
+                'skills': ['Python', 'FastAPI', 'React']
+            }
+
+            validation_result: Dict[str, Any] = {
+                'valid': True,
+                'errors': [],
+                'warnings': [],
+                'required_fields': [
+                    'contact_info.name', 'contact_info.email', 'contact_info.phone',
+                    'experience', 'education', 'skills'
+                ],
+                'found_fields': [],
+                'undeclared_variables': []
+            }
+
+            # Compute undeclared variables using docxtpl to catch typos/mistakes
+            try:
+                undeclared = template.get_undeclared_template_variables(sample_context)
+            except Exception as e:
+                undeclared = set()
+                validation_result['warnings'].append(f"Could not compute undeclared variables: {str(e)}")
+
+            if undeclared:
+                validation_result['undeclared_variables'] = sorted(list(undeclared))
+                validation_result['valid'] = False
+                validation_result['errors'].append(
+                    "Template references variables not present in the supported context"
+                )
+
+            # Read all visible text (paragraphs + tables) to detect presence of required placeholders
+            doc = Document(template_path)
+            template_text_parts: List[str] = []
+            for paragraph in doc.paragraphs:
+                template_text_parts.append(paragraph.text)
+            for table in doc.tables:
+                for row in table.rows:
+                    for cell in row.cells:
+                        for para in cell.paragraphs:
+                            template_text_parts.append(para.text)
+            template_text = "\n".join(template_text_parts)
+
+            for var in validation_result['required_fields']:
+                if var in template_text:
+                    validation_result['found_fields'].append(var)
+
+            # Add warnings for missing commonly expected fields
+            missing_fields = set(validation_result['required_fields']) - set(validation_result['found_fields'])
+            for field in sorted(list(missing_fields)):
+                validation_result['warnings'].append(
+                    f"Template variable '{{{{{field}}}}}' not found in paragraphs/tables"
+                )
+
+            return validation_result
+        
+        except Exception as e:
+            return {
+                'valid': False,
+                'errors': [f"Template validation failed: {str(e)}"],
+                'warnings': [],
+                'required_fields': [],
+                'found_fields': [],
+                'undeclared_variables': []
+            }
+    
+    def create_template_from_sample(self, sample_docx_path: Path, template_id: str) -> bool:
+        """Create a new template from a sample document"""
+        try:
+            # Copy sample to templates directory
+            new_template_path = self.templates_dir / f"{template_id}.docx"
+            
+            # Read the sample document
+            doc = Document(sample_docx_path)
+            
+            # This is a simplified version - in practice, you'd want to:
+            # 1. Analyze the document structure
+            # 2. Identify sections that should be templated
+            # 3. Replace content with appropriate template variables
+            
+            # For now, just copy the document and add basic template variables
+            doc.save(new_template_path)
+            
+            return True
+            
+        except Exception as e:
+            logging.error(f"Template creation failed: {str(e)}")
+            return False
+    
+    def get_template_preview(self, template_id: str) -> Dict[str, Any]:
+        """Get template structure for preview"""
+        template_info = self.get_template_info(template_id)
+        if not template_info:
+            return {}
+        
+        return {
+            'template_id': template_id,
+            'name': template_info.name,
+            'structure': {
+                'header': {
+                    'name': '{{contact_info.name}}',
+                    'contact': '{{contact_info.email}} | {{contact_info.phone}}'
+                },
+                'sections': [
+                    {
+                        'title': 'Professional Summary',
+                        'content': '{% if summary_bullets and summary_bullets|length > 0 %}{% for s in summary_bullets %}• {{ s }}{% endfor %}{% else %}{{summary}}{% endif %}'
+                    },
+                    {
+                        'title': 'Professional Experience',
+                        'content': '{% for exp in experience %}{{exp.title}} - {{exp.company}}{% endfor %}'
+                    },
+                    {
+                        'title': 'Education',
+                        'content': '{% for edu in education %}{{edu.degree}} - {{edu.institution}}{% endfor %}'
+                    },
+                    {
+                        'title': 'Skills',
+                        'content': '{{skills | join(", ")}}'
+                    }
+                ]
+            }
+        }
+    
+    def _bulletize_summary(self, summary: str) -> List[str]:
+        """Convert summary text into bullet points. Prefer AI formatting if configured, otherwise heuristic split."""
+        cleaned = (summary or '').strip()
+        if not cleaned:
+            return []
+        # Heuristic split: prefer newlines, then sentence boundaries
+        parts: List[str] = []
+        # Normalize whitespace
+        cleaned = cleaned.replace('\r', '')
+        # Split by explicit newlines first
+        for line in cleaned.split('\n'):
+            line = line.strip(' •-\t')
+            if not line:
+                continue
+            # Further split long lines by sentences
+            sentences = re.split(r'(?<=[.!?])\s+', line)
+            for s in sentences:
+                s = s.strip(' •-\t')
+                if len(s) >= 2:
+                    parts.append(s)
+        # Deduplicate and cap length
+        uniq = []
+        seen = set()
+        for p in parts:
+            k = p.lower()
+            if k not in seen:
+                uniq.append(p)
+                seen.add(k)
+        return uniq[:10]
+    
+    def _collect_warnings(self, context: Dict[str, Any]) -> None:
+        """Populate self.last_warnings based on missing or weak content for templates."""
+        warnings: List[str] = []
+        ci = context.get('contact_info', {}) or {}
+        if not ci.get('name') or ci.get('name') == 'N/A':
+            warnings.append('Missing candidate name')
+        if not ci.get('email') or ci.get('email') == 'N/A':
+            warnings.append('Missing email')
+        if not context.get('summary') or 'not available' in str(context.get('summary')).lower():
+            warnings.append('Missing professional summary')
+        if not context.get('summary_bullets'):
+            warnings.append('Summary not bulletized or missing')
+        if not context.get('skills'):
+            warnings.append('Skills section is empty')
+        # Keep for retrieval after render
+        self.last_warnings = warnings
+    
+    def get_last_warnings(self) -> List[str]:
+        return self.last_warnings
+    
+    def _prune_templates_to_main(self) -> None:
+        """Move all templates except the main ezest-updated.docx to templates/backup for a clean single-template setup."""
+        backup_dir = self.templates_dir / "backup"
+        backup_dir.mkdir(exist_ok=True)
+        try:
+            for docx in self.templates_dir.glob("*.docx"):
+                # Keep only the main template in place
+                if docx.name.lower() == "ezest-updated.docx":
+                    continue
+                # Backup others with a unique name if needed
+                dest = backup_dir / docx.name
+                if dest.exists():
+                    ts = datetime.now().strftime('%Y%m%d%H%M%S')
+                    dest = backup_dir / f"{docx.stem}_{ts}{docx.suffix}"
+                try:
+                    docx.replace(dest)
+                except Exception as be:
+                    logging.warning(f"Could not backup {docx.name}: {be}")
+        except Exception as e:
+            logging.warning(f"Prune-to-main encountered an issue: {e}")
+
+    def _ensure_ezest_updated_bullets_template(self) -> None:
+        """Create a new official ezest-updated.docx with the required structure and back up any existing templates."""
+        try:
+            # Backup existing templates matching ezest* into templates/backup/
+            backup_dir = self.templates_dir / "backup"
+            backup_dir.mkdir(exist_ok=True)
+
+            def _backup_with_unique_name(src: Path) -> None:
+                try:
+                    dest = backup_dir / src.name
+                    if dest.exists():
+                        ts = datetime.now().strftime('%Y%m%d%H%M%S')
+                        dest = backup_dir / f"{src.stem}_{ts}{src.suffix}"
+                    src.replace(dest)
+                except Exception as be:
+                    logging.warning(f"Skipping backup for {src.name}: {be}")
+
+            for old in self.templates_dir.glob("ezest*.docx"):
+                _backup_with_unique_name(old)
+            # Also ensure any stray ezest-updated variants are backed up uniquely
+            for old in self.templates_dir.glob("ezest-updated*.docx"):
+                if old.exists():
+                    _backup_with_unique_name(old)
+            
+            target = self.templates_dir / "ezest-updated.docx"
+            # Build fresh template
+            doc = Document()
+            # Header: Candidate Name and Title
+            heading = doc.add_paragraph()
+            heading.add_run('{{contact_info.name}}').bold = True
+            title_p = doc.add_paragraph()
+            title_p.add_run('({{ contact_info.title | default("Professional Title") }})')
+            
+            # Profile Summary (bullets)
+            doc.add_heading('Profile Summary', level=1)
+            doc.add_paragraph('{% if summary_bullets and summary_bullets|length > 0 %}')
+            doc.add_paragraph('{% for single_line in summary_bullets %}• {{ single_line }}{% endfor %}')
+            doc.add_paragraph('{% else %}{{ summary }}{% endif %}')
+            
+            # Professional Skills (2-column table)
+            doc.add_heading('Professional Skills', level=1)
+            skills_tbl = doc.add_table(rows=1, cols=2)
+            skills_tbl.autofit = True
+            skills_tbl.cell(0,0).text = '{% for skill in skills[0::2] %}{{ skill }}{% if not loop.last %}, {% endif %}{% endfor %}'
+            skills_tbl.cell(0,1).text = '{% for skill in skills[1::2] %}{{ skill }}{% if not loop.last %}, {% endif %}{% endfor %}'
+            
+            # Relevant Work Experience (single-column table with bullets for responsibilities)
+            doc.add_heading('Relevant Work Experience', level=1)
+            exp_tbl = doc.add_table(rows=1, cols=1)
+            exp_tbl.cell(0,0).text = (
+                '{% for exp in experience %}'
+                'Project #{{ loop.index }}\n'
+                'Duration: {{ exp.start_date }} - {{ exp.end_date }}\n\n'
+                'Project Description: {{ exp.description }}\n\n'
+                'Technology: {{ exp.technologies | join(", ") if exp.technologies else "" }}\n\n'
+                'Role & Responsibilities:\n'
+                '{% if exp.responsibilities %}'
+                '{% for r in exp.responsibilities %}• {{ r }}\n{% endfor %}'
+                '{% else %}• {{ exp.description }}\n{% endif %}\n\n'
+                '{% endfor %}'
+            )
+            
+            # Other Notable Projects (optional 3-column table)
+            doc.add_heading('Other Notable Projects', level=1)
+            onp = doc.add_table(rows=2, cols=3)
+            onp.cell(0,0).text = 'Project'
+            onp.cell(0,1).text = 'Duration'
+            onp.cell(0,2).text = 'Technology'
+            onp.cell(1,0).text = '{% if other_projects %}{% for p in other_projects %}{{ p.name }}{% if not loop.last %}\n{% endif %}{% endfor %}{% else %}{% endif %}'
+            onp.cell(1,1).text = '{% if other_projects %}{% for p in other_projects %}{{ p.duration }}{% if not loop.last %}\n{% endif %}{% endfor %}{% else %}{% endif %}'
+            onp.cell(1,2).text = '{% if other_projects %}{% for p in other_projects %}{{ p.technologies | join(", ") }}{% if not loop.last %}\n{% endif %}{% endfor %}{% else %}{% endif %}'
+            
+            # Education Details (3 columns)
+            doc.add_heading('Education Details', level=1)
+            edu_tbl = doc.add_table(rows=2, cols=3)
+            edu_tbl.cell(0,0).text = 'Course'
+            edu_tbl.cell(0,1).text = 'University'
+            edu_tbl.cell(0,2).text = 'Year of Passing'
+            edu_tbl.cell(1,0).text = '{% for edu in education %}{{ edu.degree }}{% if not loop.last %}\n{% endif %}{% endfor %}'
+            edu_tbl.cell(1,1).text = '{% for edu in education %}{{ edu.institution }}{% if not loop.last %}\n{% endif %}{% endfor %}'
+            edu_tbl.cell(1,2).text = '{% for edu in education %}{{ edu.graduation_date }}{% if not loop.last %}\n{% endif %}{% endfor %}'
+            
+            # Save official template
+            doc.save(target)
+            logging.info("Created fresh ezest-updated.docx with required layout; backups stored under templates/backup/")
+        except Exception as e:
+            logging.error(f"Failed to (re)create ezest-updated template: {e}")
