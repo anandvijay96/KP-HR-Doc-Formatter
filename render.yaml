@@ -17,7 +17,7 @@ services:
     healthCheckPath: /health
     envVars:
       - key: PYTHON_VERSION
-        value: 3.11
+        value: 3.11.9
       - key: REDIS_URL
         fromDatabase:
           name: kp-hr-redis
@@ -43,7 +43,7 @@ services:
     startCommand: "celery -A app.services.celery_app.celery_app worker -l info"
     envVars:
       - key: PYTHON_VERSION
-        value: 3.11
+        value: 3.11.9
       - key: REDIS_URL
         fromDatabase:
           name: kp-hr-redis
