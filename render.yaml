@@ -9,9 +9,11 @@ databases:
 
 services:
   - type: web
-    name: kp-hr-doc-formatter-backend
+    name: kp-hr-doc-formatter-backend-docker
     runtime: docker
     plan: free
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
     healthCheckPath: /health
     envVars:
       - key: REDIS_URL
@@ -32,7 +34,7 @@ services:
         value: "https://your-netlify-site-name.netlify.app,https://your-vercel-site-name.vercel.app"
 
   - type: worker
-    name: kp-hr-doc-formatter-worker
+    name: kp-hr-doc-formatter-worker-docker
     runtime: docker
     plan: free
     dockerfilePath: ./Dockerfile

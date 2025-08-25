@@ -43,8 +43,9 @@ WORKDIR /app
 COPY --from=builder /opt/venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
-# Copy application code
+# Copy application code and templates
 COPY app/ ./app/
+COPY templates/ ./templates/
 
 # Create and set permissions for necessary directories
 RUN mkdir -p uploads output logs templates && \
