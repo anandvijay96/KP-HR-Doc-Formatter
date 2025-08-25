@@ -16,6 +16,8 @@ services:
     startCommand: "uvicorn app.main:app --host 0.0.0.0 --port $PORT"
     healthCheckPath: /health
     envVars:
+      - key: PYTHON_VERSION
+        value: "3.11.9"
       - key: REDIS_URL
         fromDatabase:
           name: kp-hr-redis
@@ -40,6 +42,8 @@ services:
     buildCommand: "pip install -r requirements.txt"
     startCommand: "celery -A app.services.celery_app.celery_app worker -l info"
     envVars:
+      - key: PYTHON_VERSION
+        value: "3.11.9"
       - key: REDIS_URL
         fromDatabase:
           name: kp-hr-redis
