@@ -10,14 +10,10 @@ databases:
 services:
   - type: web
     name: kp-hr-doc-formatter-backend
-    env: python
+    runtime: docker
     plan: free
-    buildCommand: "pip install -r requirements.txt"
-    startCommand: "uvicorn app.main:app --host 0.0.0.0 --port $PORT"
     healthCheckPath: /health
     envVars:
-      - key: PYTHON_VERSION
-        value: "3.11.9"
       - key: REDIS_URL
         fromDatabase:
           name: kp-hr-redis
@@ -37,13 +33,12 @@ services:
 
   - type: worker
     name: kp-hr-doc-formatter-worker
-    env: python
+    runtime: docker
     plan: free
-    buildCommand: "pip install -r requirements.txt"
-    startCommand: "celery -A app.services.celery_app.celery_app worker -l info"
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    dockerCommand: celery -A app.services.celery_app.celery_app worker -l info
     envVars:
-      - key: PYTHON_VERSION
-        value: "3.11.9"
       - key: REDIS_URL
         fromDatabase:
           name: kp-hr-redis
