@@ -24,7 +24,7 @@ class JobManager:
             self.redis_client = redis.from_url(settings.REDIS_URL)
         return self.redis_client
     
-    async def create_job(self, filename: str, template_id: str) -> str:
+    async def create_job(self, filename: str, template_id: str, *, use_gemini: bool = False, gemini_api_key: Optional[str] = None) -> str:
         """Create a new processing job"""
         job_id = str(uuid.uuid4())
         
@@ -32,7 +32,9 @@ class JobManager:
             job_id=job_id,
             status=JobStatus.PENDING,
             template_id=template_id,
-            original_filename=filename
+            original_filename=filename,
+            use_gemini=use_gemini,
+            gemini_api_key=gemini_api_key
         )
         
         # Store job in Redis
@@ -93,7 +95,11 @@ class JobManager:
                 return
             
             # Process the document
-            extracted_data = await self.document_processor.process_document(job.original_filename)
+            extracted_data = await self.document_processor.process_document(
+                job.original_filename,
+                use_gemini=bool(getattr(job, 'use_gemini', False)),
+                gemini_api_key=getattr(job, 'gemini_api_key', None)
+            )
             
             # Apply template to generate formatted resume (with fallback on error)
             output_filename = None

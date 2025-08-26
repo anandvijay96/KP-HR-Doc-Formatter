@@ -12,6 +12,10 @@ import {
   ListItemIcon,
   IconButton,
   Paper,
+  TextField,
+  FormControlLabel,
+  Switch,
+  Tooltip,
 } from '@mui/material';
 import {
   CloudUpload as UploadIcon,
@@ -38,6 +42,8 @@ const FileUpload: React.FC<FileUploadProps> = ({ onUploadSuccess, selectedTempla
   const [files, setFiles] = useState<FileWithStatus[]>([]);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [useGemini, setUseGemini] = useState<boolean>(false);
+  const [geminiApiKey, setGeminiApiKey] = useState<string>('');
 
   const onDrop = useCallback((acceptedFiles: File[]) => {
     const newFiles = acceptedFiles.map(file => ({
@@ -79,7 +85,11 @@ const FileUpload: React.FC<FileUploadProps> = ({ onUploadSuccess, selectedTempla
         ));
 
         try {
-          const response = await uploadSingleResume(fileWithStatus.file, selectedTemplate);
+          const response = await uploadSingleResume(
+            fileWithStatus.file,
+            selectedTemplate,
+            { useGemini, geminiApiKey: geminiApiKey || null }
+          );
           setFiles(prev => prev.map(f => 
             f === fileWithStatus ? { ...f, status: 'success', jobId: response.job_id } : f
           ));
@@ -99,7 +109,8 @@ const FileUpload: React.FC<FileUploadProps> = ({ onUploadSuccess, selectedTempla
         try {
           const response = await uploadBatchResumes(
             pendingFiles.map(f => f.file), 
-            selectedTemplate
+            selectedTemplate,
+            { useGemini, geminiApiKey: geminiApiKey || null }
           );
           
           // Update file statuses
@@ -190,6 +201,26 @@ const FileUpload: React.FC<FileUploadProps> = ({ onUploadSuccess, selectedTempla
           {error}
         </Alert>
       )}
+
+      {/* LLM Options */}
+      <Box sx={{ mt: 2, display: 'flex', gap: 2, alignItems: 'center' }}>
+        <FormControlLabel
+          control={<Switch checked={useGemini} onChange={(e) => setUseGemini(e.target.checked)} />}
+          label="Use Gemini LLM"
+        />
+        <Tooltip title="Your API key is used only to process this upload and is not stored permanently.">
+          <TextField
+            label="Gemini API Key"
+            type="password"
+            size="small"
+            value={geminiApiKey}
+            onChange={(e) => setGeminiApiKey(e.target.value)}
+            placeholder="Enter your API key"
+            sx={{ minWidth: 320 }}
+            disabled={!useGemini}
+          />
+        </Tooltip>
+      </Box>
 
       {/* File List */}
       {hasFiles && (

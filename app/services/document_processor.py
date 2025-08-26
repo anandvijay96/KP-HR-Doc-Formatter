@@ -17,16 +17,23 @@ from app.core.config import settings
 from app.models.schemas import ExtractedData, ContactInfo, Experience, Education
 from app.services.nlp_extractor import NLPExtractor
 from app.services.ocr_processor import OCRProcessor
+from app.services.gemini_processor import GeminiProcessor
 import fitz  # PyMuPDF
 
 class DocumentProcessor:
     """Core document processing service"""
     
-    def __init__(self):
+    def __init__(self, gemini_api_key: Optional[str] = None):
         self.upload_dir = Path(settings.UPLOAD_DIR)
         self.output_dir = Path(settings.OUTPUT_DIR)
         self.nlp_extractor = NLPExtractor()
         self.ocr_processor = OCRProcessor()
+        self.gemini_processor = None
+        if gemini_api_key:
+            try:
+                self.gemini_processor = GeminiProcessor(gemini_api_key)
+            except Exception as e:
+                logging.warning(f"Failed to initialize Gemini processor: {e}")
         
     async def save_uploaded_file(self, file_content: bytes, filename: str) -> str:
         """Save uploaded file and return unique filename"""
@@ -174,7 +181,7 @@ class DocumentProcessor:
             confidence_score=0.5  # Lower confidence for basic extraction
         )
     
-    async def process_document(self, filename: str) -> ExtractedData:
+    async def process_document(self, filename: str, use_gemini: bool = False, gemini_api_key: Optional[str] = None) -> ExtractedData:
         """Process uploaded document and extract data"""
         file_path = self.upload_dir / filename
         
@@ -195,8 +202,25 @@ class DocumentProcessor:
         else:
             raise ValueError(f"Unsupported file type: {file_extension}")
         
-        # Extract structured data using advanced NLP methods
-        extracted_data = self.advanced_data_extraction(text)
+        # Check if Gemini should be used
+        if use_gemini and (gemini_api_key or self.gemini_processor):
+            try:
+                # Update API key if provided
+                if gemini_api_key and not self.gemini_processor:
+                    self.gemini_processor = GeminiProcessor(gemini_api_key)
+                elif gemini_api_key and self.gemini_processor:
+                    self.gemini_processor.update_api_key(gemini_api_key)
+                
+                # Use Gemini for extraction
+                logging.info("Using Gemini for resume extraction")
+                extracted_data = await self.gemini_processor.process_resume(text)
+            except Exception as e:
+                logging.error(f"Gemini extraction failed: {e}")
+                # Fallback to traditional extraction
+                extracted_data = self.advanced_data_extraction(text)
+        else:
+            # Extract structured data using advanced NLP methods
+            extracted_data = self.advanced_data_extraction(text)
         
         return extracted_data
     

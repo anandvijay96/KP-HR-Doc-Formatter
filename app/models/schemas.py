@@ -82,6 +82,9 @@ class ProcessingJob(BaseModel):
     created_at: datetime = Field(default_factory=datetime.now)
     completed_at: Optional[datetime] = None
     processing_time: Optional[float] = None
+    # LLM processing options
+    use_gemini: bool = False
+    gemini_api_key: Optional[str] = None
 
 class JobResponse(BaseModel):
     """Job response model"""

@@ -87,10 +87,16 @@ export interface BatchUploadResponse {
 }
 
 // Upload API
-export const uploadSingleResume = async (file: File, templateId: string = 'ezest-updated'): Promise<UploadResponse> => {
+export const uploadSingleResume = async (
+  file: File,
+  templateId: string = 'ezest-updated',
+  options?: { useGemini?: boolean; geminiApiKey?: string | null }
+): Promise<UploadResponse> => {
   const formData = new FormData();
   formData.append('file', file);
   formData.append('template_id', templateId);
+  if (options?.useGemini) formData.append('use_gemini', String(!!options.useGemini));
+  if (options?.geminiApiKey) formData.append('gemini_api_key', options.geminiApiKey);
 
   try {
     const response = await api.post('/upload/single', formData, {
@@ -104,10 +110,16 @@ export const uploadSingleResume = async (file: File, templateId: string = 'ezest
   }
 };
 
-export const uploadBatchResumes = async (files: File[], templateId: string = 'ezest-updated'): Promise<BatchUploadResponse> => {
+export const uploadBatchResumes = async (
+  files: File[],
+  templateId: string = 'ezest-updated',
+  options?: { useGemini?: boolean; geminiApiKey?: string | null }
+): Promise<BatchUploadResponse> => {
   const formData = new FormData();
   files.forEach(file => formData.append('files', file));
   formData.append('template_id', templateId);
+  if (options?.useGemini) formData.append('use_gemini', String(!!options.useGemini));
+  if (options?.geminiApiKey) formData.append('gemini_api_key', options.geminiApiKey);
 
   try {
     const response = await api.post('/upload/batch', formData, {

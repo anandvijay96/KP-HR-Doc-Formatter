@@ -15,7 +15,9 @@ job_manager = JobManager()
 @router.post("/single", response_model=UploadResponse)
 async def upload_single_resume(
     file: UploadFile = File(...),
-    template_id: str = Form(default="ezest-updated")
+    template_id: str = Form(default="ezest-updated"),
+    use_gemini: bool = Form(default=False),
+    gemini_api_key: Optional[str] = Form(default=None),
 ):
     """Upload a single resume file for processing"""
     
@@ -47,8 +49,13 @@ async def upload_single_resume(
             file_content, file.filename
         )
         
-        # Create processing job
-        job_id = await job_manager.create_job(unique_filename, template_id)
+        # Create processing job (optionally with Gemini LLM)
+        job_id = await job_manager.create_job(
+            unique_filename,
+            template_id,
+            use_gemini=use_gemini,
+            gemini_api_key=gemini_api_key,
+        )
         
         # Start background processing
         await job_manager.start_background_job(job_id)
@@ -66,7 +73,9 @@ async def upload_single_resume(
 @router.post("/batch", response_model=BatchUploadResponse)
 async def upload_batch_resumes(
     files: List[UploadFile] = File(...),
-    template_id: str = Form(default="default")
+    template_id: str = Form(default="default"),
+    use_gemini: bool = Form(default=False),
+    gemini_api_key: Optional[str] = Form(default=None),
 ):
     """Upload multiple resume files for batch processing"""
     
@@ -102,7 +111,12 @@ async def upload_batch_resumes(
             unique_filename = await document_processor.save_uploaded_file(
                 file_content, file.filename
             )
-            job_id = await job_manager.create_job(unique_filename, template_id)
+            job_id = await job_manager.create_job(
+                unique_filename,
+                template_id,
+                use_gemini=use_gemini,
+                gemini_api_key=gemini_api_key,
+            )
             
             # Start background processing
             await job_manager.start_background_job(job_id)
