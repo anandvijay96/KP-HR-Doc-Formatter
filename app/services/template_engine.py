@@ -26,11 +26,10 @@ class TemplateEngine:
         self.templates_dir.mkdir(exist_ok=True)
         self.output_dir.mkdir(exist_ok=True)
         
-        # Keep only a single main template to simplify debugging
-        self._prune_templates_to_main()
-        
-        # Ensure an updated e-Zest template with summary bullets is available
-        self._ensure_ezest_updated_bullets_template()
+        # Do NOT modify user's templates automatically. Only create if missing.
+        main_tmpl = self.templates_dir / "ezest-updated.docx"
+        if not main_tmpl.exists():
+            self._ensure_ezest_updated_bullets_template()
     
     def _create_default_template(self):
         """Create a default template if none exists"""
@@ -152,11 +151,13 @@ class TemplateEngine:
     
     def list_templates(self) -> List[TemplateInfo]:
         """List only the main template to simplify debugging."""
-        # Ensure main exists
-        try:
-            self._ensure_ezest_updated_bullets_template()
-        except Exception:
-            pass
+        # Only create template if it doesn't exist (prevent overwriting user edits)
+        main_path = self.templates_dir / "ezest-updated.docx"
+        if not main_path.exists():
+            try:
+                self._ensure_ezest_updated_bullets_template()
+            except Exception:
+                pass
         
         templates: List[TemplateInfo] = []
         main_path = self.templates_dir / "ezest-updated.docx"
@@ -204,6 +205,34 @@ class TemplateEngine:
         """Prepare context data for template rendering"""
         # Bulletize summary into list items suitable for templating
         bullets = self._bulletize_summary(extracted_data.summary or '')
+        # Build Tools & Technologies helpers
+        skills_grouped = getattr(extracted_data, 'skills_grouped', {}) or {}
+        tools_title = getattr(extracted_data, 'tools_title', None) or 'Professional Skills'
+        skills_left_lines = ''
+        skills_right_lines = ''
+        skills_rows: List[Dict[str, str]] = []
+        if skills_grouped:
+            left_lines: List[str] = []
+            right_lines: List[str] = []
+            for label, items in skills_grouped.items():
+                left_lines.append(str(label))
+                right_lines.append(', '.join([str(x) for x in (items or []) if str(x).strip()]))
+                skills_rows.append({
+                    'left': str(label),
+                    'right': ', '.join([str(x) for x in (items or []) if str(x).strip()])
+                })
+            skills_left_lines = '\n'.join(left_lines)
+            skills_right_lines = '\n'.join(right_lines)
+        else:
+            # Fallback: keep single row using flat skills
+            skills_left_lines = 'Skills'
+            skills_right_lines = ', '.join(extracted_data.skills or [])
+            if skills_right_lines:
+                skills_rows.append({'left': skills_left_lines, 'right': skills_right_lines})
+
+        # Title: ensure empty string if missing so no stray characters render
+        safe_title = (getattr(extracted_data.contact_info, 'title', None) or '').strip()
+
         context = {
             'contact_info': {
                 'name': extracted_data.contact_info.name or 'N/A',
@@ -211,13 +240,21 @@ class TemplateEngine:
                 'phone': extracted_data.contact_info.phone or 'N/A',
                 'address': extracted_data.contact_info.address or '',
                 'linkedin': extracted_data.contact_info.linkedin or '',
-                'website': extracted_data.contact_info.website or ''
+                'website': extracted_data.contact_info.website or '',
+                'title': safe_title
             },
-'summary': extracted_data.summary or 'Professional summary not available.',
+            'summary': extracted_data.summary or 'Professional summary not available.',
             'summary_bullets': bullets,
             'experience': [],
             'education': [],
-            'skills': extracted_data.skills or []
+            'skills': extracted_data.skills or [],
+            'tools_title': tools_title,
+            'skills_grouped': skills_grouped,
+            # Preformatted 2-column lines for the template (no style changes needed)
+            'skills_left_lines': skills_left_lines,
+            'skills_right_lines': skills_right_lines,
+            # Row-wise pairs for docxtpl row loop
+            'skills_rows': skills_rows
         }
         
         # Process experience data
@@ -478,30 +515,12 @@ class TemplateEngine:
             logging.warning(f"Prune-to-main encountered an issue: {e}")
 
     def _ensure_ezest_updated_bullets_template(self) -> None:
-        """Create a new official ezest-updated.docx with the required structure and back up any existing templates."""
+        """Create ezest-updated.docx only if it does not exist. Never overwrite user-updated template."""
         try:
-            # Backup existing templates matching ezest* into templates/backup/
-            backup_dir = self.templates_dir / "backup"
-            backup_dir.mkdir(exist_ok=True)
-
-            def _backup_with_unique_name(src: Path) -> None:
-                try:
-                    dest = backup_dir / src.name
-                    if dest.exists():
-                        ts = datetime.now().strftime('%Y%m%d%H%M%S')
-                        dest = backup_dir / f"{src.stem}_{ts}{src.suffix}"
-                    src.replace(dest)
-                except Exception as be:
-                    logging.warning(f"Skipping backup for {src.name}: {be}")
-
-            for old in self.templates_dir.glob("ezest*.docx"):
-                _backup_with_unique_name(old)
-            # Also ensure any stray ezest-updated variants are backed up uniquely
-            for old in self.templates_dir.glob("ezest-updated*.docx"):
-                if old.exists():
-                    _backup_with_unique_name(old)
-            
             target = self.templates_dir / "ezest-updated.docx"
+            if target.exists():
+                logging.info("ezest-updated.docx already exists; not recreating or modifying it")
+                return
             # Build fresh template
             doc = Document()
             # Header: Candidate Name and Title
@@ -559,8 +578,8 @@ class TemplateEngine:
             edu_tbl.cell(1,1).text = '{% for edu in education %}{{ edu.institution }}{% if not loop.last %}\n{% endif %}{% endfor %}'
             edu_tbl.cell(1,2).text = '{% for edu in education %}{{ edu.graduation_date }}{% if not loop.last %}\n{% endif %}{% endfor %}'
             
-            # Save official template
+            # Save default template (only when missing)
             doc.save(target)
-            logging.info("Created fresh ezest-updated.docx with required layout; backups stored under templates/backup/")
+            logging.info("Created ezest-updated.docx because it was missing")
         except Exception as e:
             logging.error(f"Failed to (re)create ezest-updated template: {e}")

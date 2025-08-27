@@ -9,6 +9,7 @@ from app.core.config import settings
 from app.models.schemas import ProcessingJob, JobStatus, ExtractedData
 from app.services.document_processor import DocumentProcessor
 from app.services.template_engine import TemplateEngine
+import logging
 
 class JobManager:
     """Manages processing jobs and their status"""
@@ -105,6 +106,7 @@ class JobManager:
             output_filename = None
             primary_error = None
             try:
+                logging.info(f"Rendering with template_id='{job.template_id}'")
                 output_filename = self.template_engine.apply_template(extracted_data, job.template_id)
             except Exception as e:
                 primary_error = str(e)
@@ -159,6 +161,48 @@ class JobManager:
     async def start_background_job(self, job_id: str):
         """Start job processing in background"""
         asyncio.create_task(self.process_job(job_id))
+
+    async def update_job_extracted_data(self, job_id: str, data: dict) -> bool:
+        """Update the stored extracted_data for a job."""
+        job = await self.get_job(job_id)
+        if not job:
+            return False
+        try:
+            # Merge: if job has existing extracted_data, update fields; else, validate from scratch
+            if job.extracted_data:
+                existing = job.extracted_data.model_dump()
+                existing.update(data or {})
+                job.extracted_data = ExtractedData(**existing)
+            else:
+                job.extracted_data = ExtractedData(**(data or {}))
+            # Persist
+            redis_client = await self.get_redis_client()
+            await redis_client.setex(f"job:{job_id}", 3600, job.model_dump_json())
+            return True
+        except Exception as e:
+            logging.error(f"Failed to update job extracted_data: {e}")
+            return False
+
+    async def regenerate_output(self, job_id: str) -> Optional[str]:
+        """Re-render the document for a job using its current extracted_data and template_id."""
+        job = await self.get_job(job_id)
+        if not job or not job.extracted_data:
+            return None
+        try:
+            logging.info(f"Regenerating output for job {job_id} with template_id='{job.template_id}'")
+            output_filename = self.template_engine.apply_template(job.extracted_data, job.template_id)
+            await self.update_job_status(
+                job_id,
+                JobStatus.COMPLETED,
+                extracted_data=job.extracted_data,
+                output_filename=output_filename,
+                warnings=self.template_engine.get_last_warnings()
+            )
+            return output_filename
+        except Exception as e:
+            logging.error(f"Regeneration failed: {e}")
+            await self.update_job_status(job_id, JobStatus.FAILED, error_message=str(e))
+            return None
     
     async def get_job_status(self, job_id: str) -> Dict:
         """Get job status information"""

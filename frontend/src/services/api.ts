@@ -19,6 +19,7 @@ export interface ContactInfo {
   address?: string;
   linkedin?: string;
   website?: string;
+  title?: string;
 }
 
 export interface Experience {
@@ -46,6 +47,7 @@ export interface ExtractedData {
   experience: Experience[];
   education: Education[];
   skills: string[];
+  certifications?: string[];
   raw_text?: string;
   confidence_score: number;
 }

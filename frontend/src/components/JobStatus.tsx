@@ -310,12 +310,38 @@ const JobStatus: React.FC = () => {
                     <Typography variant="body2">
                       Name: {extractedData.contact_info.name || 'N/A'}
                     </Typography>
+                    {extractedData.contact_info.title && (
+                      <Typography variant="body2">
+                        Title: {extractedData.contact_info.title}
+                      </Typography>
+                    )}
                     <Typography variant="body2">
                       Email: {extractedData.contact_info.email || 'N/A'}
                     </Typography>
                     <Typography variant="body2">
                       Phone: {extractedData.contact_info.phone || 'N/A'}
                     </Typography>
+                  </Box>
+                )}
+
+                {/* Summary (bulletized) */}
+                {extractedData.summary && (
+                  <Box sx={{ mb: 2 }}>
+                    <Typography variant="subtitle2" gutterBottom>
+                      Profile Summary
+                    </Typography>
+                    <List dense sx={{ pl: 2 }}>
+                      {extractedData.summary
+                        .split('\n')
+                        .map((s) => s.trim().replace(/^[-•\s]+/, ''))
+                        .filter((s) => s.length > 0)
+                        .slice(0, 8)
+                        .map((line, idx) => (
+                          <ListItem key={idx} sx={{ px: 0, display: 'list-item', listStyleType: 'disc' }}>
+                            <ListItemText primaryTypographyProps={{ variant: 'body2' }} primary={line} />
+                          </ListItem>
+                        ))}
+                    </List>
                   </Box>
                 )}
 

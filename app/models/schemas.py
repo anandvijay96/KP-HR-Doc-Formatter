@@ -28,6 +28,7 @@ class ContactInfo(BaseModel):
     address: Optional[str] = None
     linkedin: Optional[str] = None
     website: Optional[str] = None
+    title: Optional[str] = None
 
 class Experience(BaseModel):
     """Work experience model"""
@@ -58,6 +59,9 @@ class ExtractedData(BaseModel):
     certifications: List[str] = []
     raw_text: Optional[str] = None
     confidence_score: float = Field(default=0.0, ge=0.0, le=1.0)
+    # Additional structured fields for template rendering
+    tools_title: Optional[str] = None
+    skills_grouped: Dict[str, List[str]] = {}
 
 class TemplateInfo(BaseModel):
     """Template information model"""

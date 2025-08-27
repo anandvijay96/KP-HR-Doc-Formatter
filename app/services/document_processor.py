@@ -159,6 +159,27 @@ class DocumentProcessor:
             if '@' not in potential_name and not any(char.isdigit() for char in potential_name):
                 contact_info.name = potential_name
         
+        # Heuristic professional title extraction (best-effort)
+        # Look at the next few non-empty lines for a short role/title phrase
+        common_titles = [
+            'developer','engineer','administrator','consultant','analyst','architect',
+            'manager','lead','specialist','scientist','designer','tester','qa','devops',
+            'sdet','full stack','frontend','backend','cloud','data','ml','ai','security'
+        ]
+        for i in range(1, min(6, len(lines))):
+            line = lines[i].strip()
+            if not line or len(line) > 70:
+                continue
+            low = line.lower()
+            if any(t in low for t in common_titles):
+                # Remove stray parentheses and bullets
+                cleaned = line.strip(' ()•-\t')
+                # Avoid mistaking email/phone or headings
+                if '@' in cleaned or any(ch.isdigit() for ch in cleaned):
+                    continue
+                contact_info.title = cleaned
+                break
+        
         # Extract skills section
         skills_keywords = ['skills', 'technical skills', 'core competencies', 'technologies']
         for i, line in enumerate(lines):

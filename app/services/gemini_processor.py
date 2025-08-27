@@ -150,13 +150,15 @@ RULES:
         try:
             # Extract contact info
             contact_data = gemini_data.get('contact_info', {})
+            # Map professional title if present
             contact_info = ContactInfo(
                 name=contact_data.get('name'),
                 email=contact_data.get('email'),
                 phone=contact_data.get('phone'),
                 address=contact_data.get('address'),
                 linkedin=contact_data.get('linkedin'),
-                website=contact_data.get('website')
+                website=contact_data.get('website'),
+                title=gemini_data.get('title') or contact_data.get('title')
             )
             
             # Format professional summary from bullets
@@ -197,23 +199,21 @@ RULES:
             
             # Extract and flatten skills
             skills_data = gemini_data.get('skills', {})
-            all_skills = []
+            all_skills: List[str] = []
+            skills_grouped: Dict[str, List[str]] = {}
             if isinstance(skills_data, dict):
                 for category, skill_list in skills_data.items():
                     if isinstance(skill_list, list):
-                        all_skills.extend(skill_list)
+                        cleaned = [s for s in skill_list if s]
+                        skills_grouped[category] = cleaned
+                        all_skills.extend(cleaned)
             elif isinstance(skills_data, list):
-                all_skills = skills_data
+                all_skills = [s for s in skills_data if s]
             
             # Get certifications
             certifications = gemini_data.get('certifications', [])
             
-            # Add professional title to summary if available
-            title = gemini_data.get('title', '')
-            if title and summary:
-                summary = f"**{title}**\n\n{summary}"
-            elif title:
-                summary = title
+            # Title is now placed into contact_info.title; do not inject into summary
             
             return ExtractedData(
                 contact_info=contact_info,
@@ -222,7 +222,9 @@ RULES:
                 education=education_list,
                 skills=all_skills[:20],  # Limit skills to top 20
                 certifications=certifications,
-                confidence_score=0.95  # High confidence for LLM extraction
+                confidence_score=0.95,  # High confidence for LLM extraction
+                tools_title='Tools and Technologies',
+                skills_grouped=skills_grouped
             )
             
         except Exception as e:
