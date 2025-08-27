@@ -30,8 +30,15 @@ services:
           property: connectionString
       - key: SECRET_KEY
         generateValue: true # Render will generate a secure secret
-      - key: CORS_ORIGINS # Change in production to your Netlify/Vercel URL
-        value: "https://your-netlify-site-name.netlify.app,https://your-vercel-site-name.vercel.app"
+      - key: CORS_ORIGINS # Set to your Netlify site URL(s), comma-separated
+        value: "https://your-netlify-site-name.netlify.app"
+    disks:
+      - name: uploads
+        mountPath: /app/uploads
+        sizeGB: 1
+      - name: output
+        mountPath: /app/output
+        sizeGB: 1
 
   - type: worker
     name: kp-hr-doc-formatter-worker-docker
@@ -39,7 +46,7 @@ services:
     plan: free
     dockerfilePath: ./Dockerfile
     dockerContext: .
-    dockerCommand: celery -A app.services.celery_app.celery_app worker -l info
+    dockerCommand: celery -A app.services.celery_app.celery_app worker -l info --pool=solo
     envVars:
       - key: REDIS_URL
         fromDatabase:
