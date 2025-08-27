@@ -258,14 +258,130 @@ class TemplateEngine:
         }
         
         # Process experience data
+        # Build a lightweight vocabulary from provided skills/groups
+        skills_vocab: set = set()
+        try:
+            for k, v in (skills_grouped or {}).items():
+                for s in (v or []):
+                    if isinstance(s, str) and s.strip():
+                        skills_vocab.add(s.strip().lower())
+            for s in (extracted_data.skills or []):
+                if isinstance(s, str) and s.strip():
+                    skills_vocab.add(s.strip().lower())
+        except Exception:
+            skills_vocab = set()
+
+        def first_sentence(text: str, max_len: int = 300) -> str:
+            t = (text or '').strip()
+            if not t:
+                return ''
+            # Split on sentence enders; fallback to truncation
+            import re
+            parts = re.split(r'(?<=[.!?])\s+', t)
+            s = parts[0] if parts else t
+            if len(s) > max_len:
+                s = s[:max_len].rstrip() + '...'
+            return s
+
+        def project_level_summary(text: str) -> str:
+            """Try to pick a project-level sentence (what the project is), not actions."""
+            import re
+            t = (text or '').strip().lstrip('•- ').strip()
+            if not t:
+                return ''
+            sentences = re.split(r'(?<=[.!?])\s+', t)
+            action_verbs = {
+                'led','designed','implemented','configured','developed','built','created','maintained',
+                'managed','troubleshot','integrated','optimized','handled','validated','deployed','architected'
+            }
+            for s in sentences:
+                s_clean = s.strip()
+                if not s_clean:
+                    continue
+                first_word = re.split(r'\W+', s_clean.lower())[0]
+                if first_word not in action_verbs and len(s_clean) > 20:
+                    return s_clean
+            # Fallback to first sentence without the bullet
+            return first_sentence(t)
+
+        def extract_technologies(text: str) -> List[str]:
+            if not text:
+                return []
+            import re
+            # Known tech/tool whitelist keywords (not exhaustive, can be expanded)
+            TECH_WHITELIST = {
+                'aws','azure','gcp','kubernetes','docker','terraform','ansible','jenkins','gitlab','github',
+                'python','java','c#','.net','node','react','angular','sql','postgres','mysql','mssql','oracle',
+                'snowflake','spark','hadoop','airflow','kafka','rabbitmq','redis','mongo','elasticsearch','kibana',
+                'grafana','prometheus','tableau','powerbi','pandas','numpy','scikit','tensorflow','pytorch',
+                'rest','soap','graphql','grpc','s3','ec2','rds','eks','aks','gke',
+                'servicenow','workday','scom','sccm','scorch','scsm','okta','splunk','sonarqube','vault',
+                'powershell','bash','linux','windows','nginx','apache'
+            }
+            STOP = {
+                'the','and','for','with','using','to','of','in','on','by','a','an','at','from','via','including',
+                'system','systems','solution','solutions','service','services','tools','technology','technologies',
+                'center','desk','team','teams','process','processes','module','modules','api','apis','reports'
+            }
+            # Collect candidates
+            tokens_all = re.findall(r'[A-Za-z0-9+.#-]+', text)
+            candidates = []
+            for w in tokens_all:
+                lw = w.lower()
+                if lw in STOP:
+                    continue
+                if lw in TECH_WHITELIST or lw in skills_vocab:
+                    candidates.append(lw)
+                # also include clear acronyms (>=2 uppercase letters)
+                elif w.isupper() and len(w) >= 2:
+                    candidates.append(lw)
+            # Map back to nicely-cased labels using skills vocab originals if possible
+            techs: List[str] = []
+            uniq = []
+            for t in candidates:
+                # Try to find original-cased skill
+                match = next((sv for sv in skills_vocab if sv == t), None)
+                label = match or t
+                if label not in uniq:
+                    uniq.append(label)
+            return uniq
+
+        def bulletize_responsibilities(text: str) -> List[str]:
+            if not text:
+                return []
+            import re
+            # Split on bullet markers or newlines
+            raw = re.split(r'\n|•|-\s+', text)
+            items: List[str] = []
+            for it in raw:
+                s = it.strip(' •\t-\r')
+                if not s:
+                    continue
+                # Drop lines that are mostly pure tech lists (3+ commas)
+                if s.count(',') >= 3:
+                    # keep as tech list, not responsibility
+                    continue
+                items.append(s)
+            return items
+
         for exp in extracted_data.experience:
+            desc = (exp.description or '').strip()
+            techs = extract_technologies(desc)
+            resp = bulletize_responsibilities(desc)
+            project_desc = project_level_summary(desc)
+
             experience_item = {
                 'title': exp.title or 'Position Title',
                 'company': exp.company or 'Company Name',
                 'location': exp.location or '',
                 'start_date': exp.start_date or 'Start Date',
                 'end_date': exp.end_date or 'End Date',
-                'description': exp.description or 'Job description not available.',
+                # Keep original full description for reference/fallback
+                'description': desc or 'Job description not available.',
+                # New fields for template
+                'project_description': project_desc or (desc[:200] + '...') if desc else '—',
+                'technologies': techs,
+                'responsibilities': resp if resp else [],
                 'is_current': exp.is_current
             }
             context['experience'].append(experience_item)

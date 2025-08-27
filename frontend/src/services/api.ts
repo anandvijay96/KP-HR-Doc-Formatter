@@ -105,6 +105,8 @@ export const uploadSingleResume = async (
       headers: {
         'Content-Type': 'multipart/form-data',
       },
+      // Extend timeout for uploads (default instance is 30s)
+      timeout: 180000,
     });
     return response.data;
   } catch (err: any) {
@@ -128,6 +130,8 @@ export const uploadBatchResumes = async (
       headers: {
         'Content-Type': 'multipart/form-data',
       },
+      // Batch can be slower due to multiple files; allow more time
+      timeout: 180000,
     });
     return response.data;
   } catch (err: any) {
@@ -143,6 +147,12 @@ export const getJobStatus = async (jobId: string): Promise<JobStatus> => {
 
 export const getJobResult = async (jobId: string): Promise<any> => {
   const response = await api.get(`/jobs/${jobId}/result`);
+  return response.data;
+};
+
+// Regenerate rendered DOCX for a job using current extracted data and template
+export const regenerateJob = async (jobId: string): Promise<{ output_filename?: string; message?: string }> => {
+  const response = await api.post(`/jobs/${jobId}/render`);
   return response.data;
 };
 

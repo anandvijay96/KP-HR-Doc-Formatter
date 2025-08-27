@@ -25,7 +25,7 @@ import {
   Schedule as PendingIcon,
   Autorenew as ProcessingIcon,
 } from '@mui/icons-material';
-import { getJobStatus, getJobResult, downloadResult, ExtractedData } from '../services/api';
+import { getJobStatus, getJobResult, downloadResult, regenerateJob, ExtractedData } from '../services/api';
 
 const JobStatus: React.FC = () => {
   const { jobId } = useParams<{ jobId: string }>();
@@ -34,6 +34,7 @@ const JobStatus: React.FC = () => {
   const [extractedData, setExtractedData] = useState<ExtractedData | null>(null);
   const [loading, setLoading] = useState(true);
   const [downloading, setDownloading] = useState(false);
+  const [rerendering, setRerendering] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -70,6 +71,20 @@ const JobStatus: React.FC = () => {
       setError(err.message || 'Failed to load job status');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleRerender = async () => {
+    if (!jobId) return;
+    try {
+      setRerendering(true);
+      await regenerateJob(jobId);
+      // After triggering, poll once to refresh status/result
+      await loadJobStatus();
+    } catch (err: any) {
+      setError(err.message || 'Re-render failed');
+    } finally {
+      setRerendering(false);
     }
   };
 
@@ -259,6 +274,15 @@ const JobStatus: React.FC = () => {
                   Refresh
                 </Button>
                 
+                <Button
+                  variant="outlined"
+                  onClick={handleRerender}
+                  disabled={rerendering}
+                  sx={{ ml: 1 }}
+                >
+                  {rerendering ? 'Re-rendering...' : 'Re-render'}
+                </Button>
+
                 {jobData?.status === 'completed' && (
                   <Button
                     variant="contained"

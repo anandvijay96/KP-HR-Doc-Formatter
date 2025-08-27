@@ -44,6 +44,7 @@ const Dashboard: React.FC = () => {
   const [selectedTemplate, setSelectedTemplate] = useState<string>('ezest-updated');
   const [jobs, setJobs] = useState<JobItem[]>([]);
   const [loading, setLoading] = useState(false);
+  const [downloadingAll, setDownloadingAll] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -58,6 +59,38 @@ const Dashboard: React.FC = () => {
     } catch (err) {
       console.error('Failed to load templates:', err);
       setError('Failed to load templates');
+    }
+  };
+
+  const handleDownloadAll = async () => {
+    try {
+      setDownloadingAll(true);
+      // Refresh statuses
+      const updated = await Promise.all(
+        jobs.map(async (j) => ({ j, status: await getJobStatus(j.jobId) }))
+      );
+      const completed = updated.filter(u => u.status.status === 'completed');
+      if (completed.length === 0) return;
+      // Download sequentially to avoid saturating browser
+      for (const item of completed) {
+        try {
+          const blob = await downloadResult(item.j.jobId);
+          const url = window.URL.createObjectURL(blob);
+          const link = document.createElement('a');
+          link.href = url;
+          link.download = `formatted_${item.j.filename}`;
+          document.body.appendChild(link);
+          link.click();
+          document.body.removeChild(link);
+          window.URL.revokeObjectURL(url);
+          // small delay
+          await new Promise(r => setTimeout(r, 300));
+        } catch (e) {
+          console.error('Download failed for', item.j.jobId, e);
+        }
+      }
+    } finally {
+      setDownloadingAll(false);
     }
   };
 
@@ -233,6 +266,16 @@ const Dashboard: React.FC = () => {
               <Typography variant="h6" gutterBottom>
                 Recent Jobs
               </Typography>
+              <Box sx={{ display: 'flex', gap: 1, mb: 2 }}>
+                <Button
+                  variant="outlined"
+                  startIcon={<DownloadIcon />}
+                  onClick={handleDownloadAll}
+                  disabled={downloadingAll || jobs.length === 0}
+                >
+                  {downloadingAll ? 'Downloading...' : 'Download All Completed'}
+                </Button>
+              </Box>
               
               {jobs.length === 0 ? (
                 <Typography variant="body2" color="text.secondary">
