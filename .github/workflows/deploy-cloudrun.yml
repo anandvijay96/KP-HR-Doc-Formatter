@@ -1,0 +1,78 @@
+name: Deploy Backend to Cloud Run
+
+on:
+  push:
+    branches: [ main ]
+
+env:
+  PROJECT_ID: kp-hr-doc-formatter
+  REGION: asia-south1
+  AR_REPO: hr-formatter
+  IMAGE_NAME: backend
+  API_SERVICE: hr-formatter-api
+  WORKER_SERVICE: hr-formatter-worker
+  RUNTIME_SA: hr-run-sa@kp-hr-doc-formatter.iam.gserviceaccount.com
+
+jobs:
+  build-and-deploy:
+    name: Build image with Cloud Build and deploy to Cloud Run
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          version: ">= 454.0.0"
+
+      # Authenticate to GCP using a Service Account Key stored in GitHub Secrets.
+      # Recommended long-term: switch to Workload Identity Federation.
+      - name: Auth with Service Account
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Configure gcloud defaults
+        run: |
+          gcloud config set project ${PROJECT_ID}
+          gcloud config set run/region ${REGION}
+
+      - name: Enable required services (idempotent)
+        run: |
+          gcloud services enable run.googleapis.com artifactregistry.googleapis.com cloudbuild.googleapis.com
+
+      - name: Build and push image with Cloud Build
+        run: |
+          IMAGE_TAG=${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.AR_REPO }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+          LATEST_TAG=${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.AR_REPO }}/${{ env.IMAGE_NAME }}:latest
+          gcloud builds submit --tag "$IMAGE_TAG" --machine-type=e2-highcpu-8
+          gcloud container images add-tag "$IMAGE_TAG" "$LATEST_TAG" --quiet
+
+      - name: Deploy API service
+        run: |
+          IMAGE=${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.AR_REPO }}/${{ env.IMAGE_NAME }}:latest
+          gcloud run deploy ${API_SERVICE} \
+            --image=$IMAGE \
+            --region=${REGION} \
+            --allow-unauthenticated \
+            --service-account=${RUNTIME_SA} \
+            --timeout=900 --cpu=1 --memory=2Gi \
+            --set-env-vars="CORS_ORIGINS=${{ secrets.NETLIFY_URL }},REDIS_URL=${{ secrets.REDIS_URL }},CELERY_BROKER_URL=${{ secrets.REDIS_URL }},CELERY_RESULT_BACKEND=${{ secrets.REDIS_URL }},CELERY_BROKER_POOL_LIMIT=5,CELERY_REDIS_MAX_CONNECTIONS=10,CELERY_RESULT_EXPIRES=86400,CELERY_BROKER_CONNECTION_TIMEOUT=10,CELERY_BROKER_HEARTBEAT=0,GCS_BUCKET=${{ secrets.GCS_BUCKET }},GCS_UPLOAD_PREFIX=uploads,GCS_OUTPUT_PREFIX=output,MAX_FILE_SIZE=10485760,SECRET_KEY=${{ secrets.SECRET_KEY }}"
+
+      - name: Deploy Worker service
+        run: |
+          IMAGE=${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.AR_REPO }}/${{ env.IMAGE_NAME }}:latest
+          gcloud run deploy ${WORKER_SERVICE} \
+            --image=$IMAGE \
+            --region=${REGION} \
+            --no-allow-unauthenticated \
+            --service-account=${RUNTIME_SA} \
+            --timeout=900 --cpu=1 --memory=2Gi \
+            --set-env-vars="CORS_ORIGINS=${{ secrets.NETLIFY_URL }},REDIS_URL=${{ secrets.REDIS_URL }},CELERY_BROKER_URL=${{ secrets.REDIS_URL }},CELERY_RESULT_BACKEND=${{ secrets.REDIS_URL }},CELERY_BROKER_POOL_LIMIT=5,CELERY_REDIS_MAX_CONNECTIONS=10,CELERY_RESULT_EXPIRES=86400,CELERY_BROKER_CONNECTION_TIMEOUT=10,CELERY_BROKER_HEARTBEAT=0,GCS_BUCKET=${{ secrets.GCS_BUCKET }},GCS_UPLOAD_PREFIX=uploads,GCS_OUTPUT_PREFIX=output,MAX_FILE_SIZE=10485760,SECRET_KEY=${{ secrets.SECRET_KEY }}" \
+            --command=sh \
+            --args='-c,celery -A app.services.celery_app.celery_app worker -l info --pool=solo & uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8080}'

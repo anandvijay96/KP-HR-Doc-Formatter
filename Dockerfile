@@ -54,9 +54,9 @@ RUN mkdir -p uploads output logs templates && \
 # Expose port (Render sets the PORT env var)
 EXPOSE 8000
 
-# Health check
+# Health check (use shell form so $PORT expands in Cloud Run)
 HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:${PORT:-8000}/health || exit 1
+    CMD sh -c 'curl -f http://localhost:${PORT:-8080}/health || exit 1'
 
-# Run the application using the port set by Render
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "${PORT:-8000}"]
+# Run the application using the port set by Cloud Run ($PORT). Use shell form for env expansion.
+CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8080}"]

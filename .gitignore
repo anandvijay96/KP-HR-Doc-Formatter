@@ -81,3 +81,9 @@ htmlcov/
 # Temporary files
 *.tmp
 *.temp
+
+# Secrets and service account keys (do NOT commit)
+deploy-sa-key.json
+*.sa.key.json
+*.gcp-key.json
+*.service-account.json
