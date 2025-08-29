@@ -50,7 +50,7 @@ jobs:
         run: |
           IMAGE_TAG=${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.AR_REPO }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
           LATEST_TAG=${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.AR_REPO }}/${{ env.IMAGE_NAME }}:latest
-          gcloud builds submit --tag "$IMAGE_TAG" --machine-type=e2-highcpu-8 --service-account="gh-actions-deployer@kp-hr-doc-formatter.iam.gserviceaccount.com" --gcs-log-dir="gs://kp-hr-doc-formatter_cloudbuild/logs"
+          gcloud builds submit --tag "$IMAGE_TAG" --machine-type=e2-highcpu-8 --service-account="projects/1068665336716/serviceAccounts/gh-actions-deployer@kp-hr-doc-formatter.iam.gserviceaccount.com" --gcs-log-dir="gs://kp-hr-doc-formatter_cloudbuild/logs"
           gcloud container images add-tag "$IMAGE_TAG" "$LATEST_TAG" --quiet
 
       - name: Deploy API service
