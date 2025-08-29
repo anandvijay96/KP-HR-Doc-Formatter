@@ -1,3 +1,5 @@
 ﻿steps:
-- name: gcr.io/cloud-builders/gcloud
-  args: ['version']
+- name: 'gcr.io/cloud-builders/docker'
+  args: ['build', '-t', '$_IMAGE_TAG', '.']
+- name: 'gcr.io/cloud-builders/docker'
+  args: ['push', '$_IMAGE_TAG']
