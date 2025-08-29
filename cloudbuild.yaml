@@ -4,3 +4,5 @@ steps:
 - name: 'gcr.io/cloud-builders/docker'
   args: ['push', '$_IMAGE_TAG']
 serviceAccount: 'projects/kp-hr-doc-formatter/serviceAccounts/gh-actions-deployer@kp-hr-doc-formatter.iam.gserviceaccount.com'
+options:
+  logging: CLOUD_LOGGING_ONLY
