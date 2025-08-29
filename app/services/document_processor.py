@@ -150,7 +150,7 @@ class DocumentProcessor:
         phone_pattern = r'(\+?1?[-.\.\s]?)?\(?([0-9]{3})\)?[-.\.\s]?([0-9]{3})[-.\.\s]?([0-9]{4})'
         phones = re.findall(phone_pattern, text)
         if phones:
-            contact_info.phone = ''.join(phones[0])
+            contact_info.phone = ''.join(phones[0]).strip()
         
         # Simple name extraction (assume first non-empty line is name)
         if lines:

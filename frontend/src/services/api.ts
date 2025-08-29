@@ -185,6 +185,17 @@ export const downloadResult = async (jobId: string): Promise<Blob> => {
   return response.data;
 };
 
+export const downloadBatchZip = async (jobIds: string[]): Promise<Blob> => {
+  const response = await api.post(
+    `/download/batch`,
+    jobIds,
+    {
+      responseType: 'blob',
+    }
+  );
+  return response.data;
+};
+
 export const cleanupJobFiles = async (jobId: string): Promise<{ message: string; job_id: string }> => {
   const response = await api.delete(`/download/${jobId}`);
   return response.data;

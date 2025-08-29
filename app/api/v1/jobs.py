@@ -1,16 +1,19 @@
-from fastapi import APIRouter, HTTPException, Path, Body
+from fastapi import APIRouter, HTTPException, Path, Body, Depends
 from fastapi.responses import JSONResponse
 from typing import Dict, Any, Optional
 
 from app.models.schemas import JobResponse, JobStatus
-from app.services.job_manager import JobManager
+import app.services.job_manager as job_manager_module
 
 router = APIRouter()
-job_manager = JobManager()
+
+def get_job_manager() -> job_manager_module.JobManager:
+    return job_manager_module.JobManager()
 
 @router.get("/{job_id}/status")
 async def get_job_status(
-    job_id: str = Path(..., description="Job ID to check status")
+    job_id: str = Path(..., description="Job ID to check status"),
+    job_manager: job_manager_module.JobManager = Depends(get_job_manager),
 ) -> Dict[str, Any]:
     """Get the status of a processing job"""
     
@@ -22,12 +25,16 @@ async def get_job_status(
         
         return job_status
         
+    except HTTPException:
+        # Re-raise HTTPExceptions (e.g., 404) without converting to 500
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error retrieving job status: {str(e)}")
 
 @router.get("/{job_id}/result")
 async def get_job_result(
-    job_id: str = Path(..., description="Job ID to get result")
+    job_id: str = Path(..., description="Job ID to get result"),
+    job_manager: job_manager_module.JobManager = Depends(get_job_manager),
 ) -> Dict[str, Any]:
     """Get the result of a completed processing job"""
     
@@ -63,7 +70,8 @@ async def get_job_result(
 @router.patch("/{job_id}/data")
 async def update_job_data(
     job_id: str = Path(..., description="Job ID to update extracted data"),
-    payload: Dict[str, Any] = Body(..., description="Partial ExtractedData payload to merge")
+    payload: Dict[str, Any] = Body(..., description="Partial ExtractedData payload to merge"),
+    job_manager: job_manager_module.JobManager = Depends(get_job_manager),
 ) -> Dict[str, Any]:
     """Update the stored extracted_data for a job (for inline editing)."""
     try:
@@ -83,7 +91,8 @@ async def update_job_data(
 
 @router.post("/{job_id}/render")
 async def regenerate_job_output(
-    job_id: str = Path(..., description="Job ID to regenerate output")
+    job_id: str = Path(..., description="Job ID to regenerate output"),
+    job_manager: job_manager_module.JobManager = Depends(get_job_manager),
 ) -> Dict[str, Any]:
     """Regenerate DOCX using current extracted_data and template_id."""
     try:
@@ -104,7 +113,8 @@ async def regenerate_job_output(
 
 @router.delete("/{job_id}")
 async def cancel_job(
-    job_id: str = Path(..., description="Job ID to cancel")
+    job_id: str = Path(..., description="Job ID to cancel"),
+    job_manager: job_manager_module.JobManager = Depends(get_job_manager),
 ) -> Dict[str, str]:
     """Cancel a processing job"""
     

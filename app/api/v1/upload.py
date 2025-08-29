@@ -1,16 +1,21 @@
-from fastapi import APIRouter, UploadFile, File, HTTPException, Form
+from fastapi import APIRouter, UploadFile, File, HTTPException, Form, Depends
 from fastapi.responses import JSONResponse
 from typing import List, Optional
 import os
 
 from app.core.config import settings
 from app.models.schemas import UploadResponse, BatchUploadResponse
-from app.services.document_processor import DocumentProcessor
-from app.services.job_manager import JobManager
+import app.services.document_processor as document_processor_module
+import app.services.job_manager as job_manager_module
 
 router = APIRouter()
-document_processor = DocumentProcessor()
-job_manager = JobManager()
+
+# Dependency providers (simple factories). Tests can patch the classes these call.
+def get_document_processor() -> document_processor_module.DocumentProcessor:
+    return document_processor_module.DocumentProcessor()
+
+def get_job_manager() -> job_manager_module.JobManager:
+    return job_manager_module.JobManager()
 
 @router.post("/single", response_model=UploadResponse)
 async def upload_single_resume(
@@ -18,6 +23,8 @@ async def upload_single_resume(
     template_id: str = Form(default="ezest-updated"),
     use_gemini: bool = Form(default=False),
     gemini_api_key: Optional[str] = Form(default=None),
+    document_processor: document_processor_module.DocumentProcessor = Depends(get_document_processor),
+    job_manager: job_manager_module.JobManager = Depends(get_job_manager),
 ):
     """Upload a single resume file for processing"""
     
@@ -73,9 +80,11 @@ async def upload_single_resume(
 @router.post("/batch", response_model=BatchUploadResponse)
 async def upload_batch_resumes(
     files: List[UploadFile] = File(...),
-    template_id: str = Form(default="default"),
+    template_id: str = Form(default="ezest-updated"),
     use_gemini: bool = Form(default=False),
     gemini_api_key: Optional[str] = Form(default=None),
+    document_processor: document_processor_module.DocumentProcessor = Depends(get_document_processor),
+    job_manager: job_manager_module.JobManager = Depends(get_job_manager),
 ):
     """Upload multiple resume files for batch processing"""
     

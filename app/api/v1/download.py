@@ -1,18 +1,24 @@
-from fastapi import APIRouter, HTTPException, Path
-from fastapi.responses import FileResponse
+from fastapi import APIRouter, HTTPException, Path, Depends
+from fastapi.responses import FileResponse, StreamingResponse
 from pathlib import Path as PathLib
 import os
+import io
+import zipfile
+from typing import List, Optional
 
 from app.core.config import settings
-from app.services.job_manager import JobManager
+import app.services.job_manager as job_manager_module
 from app.models.schemas import JobStatus
 
 router = APIRouter()
-job_manager = JobManager()
+
+def get_job_manager() -> job_manager_module.JobManager:
+    return job_manager_module.JobManager()
 
 @router.get("/{job_id}")
 async def download_result(
-    job_id: str = Path(..., description="Job ID to download result")
+    job_id: str = Path(..., description="Job ID to download result"),
+    job_manager: job_manager_module.JobManager = Depends(get_job_manager),
 ):
     """Download the processed resume file"""
     
@@ -44,9 +50,67 @@ async def download_result(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error downloading file: {str(e)}")
 
+@router.post("/batch")
+async def download_batch(
+    job_ids: List[str],
+    job_manager: job_manager_module.JobManager = Depends(get_job_manager),
+):
+    """Download multiple completed job outputs as a single ZIP archive.
+
+    Body JSON example: {"job_ids": ["id1", "id2", ...]}
+    """
+    try:
+        if not job_ids:
+            raise HTTPException(status_code=400, detail="No job_ids provided")
+
+        zip_buffer = io.BytesIO()
+        added_any = False
+
+        with zipfile.ZipFile(zip_buffer, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
+            for jid in job_ids:
+                job = await job_manager.get_job(jid)
+                if not job:
+                    continue
+                if job.status != JobStatus.COMPLETED:
+                    continue
+                if not job.output_filename:
+                    continue
+                output_path = PathLib(settings.OUTPUT_DIR) / job.output_filename
+                if not output_path.exists():
+                    continue
+
+                # Choose archive name: prefer output filename; otherwise, derive from original with .docx
+                arcname = job.output_filename or "output.docx"
+                if getattr(job, 'original_filename', None):
+                    base = os.path.basename(str(job.original_filename))
+                    # Force .docx since formatted outputs are DOCX
+                    name, _ext = os.path.splitext(base)
+                    arcname = f"formatted_{name}.docx"
+                try:
+                    zf.write(str(output_path), arcname=arcname)
+                    added_any = True
+                except Exception:
+                    # Skip problematic files
+                    continue
+
+        if not added_any:
+            raise HTTPException(status_code=400, detail="No completed outputs available to download")
+
+        zip_buffer.seek(0)
+        headers = {
+            "Content-Disposition": "attachment; filename=formatted_batch.zip"
+        }
+        return StreamingResponse(zip_buffer, media_type="application/zip", headers=headers)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error creating ZIP: {str(e)}")
+
 @router.delete("/{job_id}")
 async def cleanup_job_files(
-    job_id: str = Path(..., description="Job ID to cleanup files")
+    job_id: str = Path(..., description="Job ID to cleanup files"),
+    job_manager: job_manager_module.JobManager = Depends(get_job_manager),
 ):
     """Clean up job files after download"""
     
