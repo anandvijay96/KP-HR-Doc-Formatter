@@ -48,6 +48,8 @@ const Dashboard: React.FC = () => {
   const [downloadingAll, setDownloadingAll] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
+  const [jobsPage, setJobsPage] = useState(0);
+  const jobsPerPage = 10;
 
   useEffect(() => {
     loadTemplates();
@@ -428,22 +430,28 @@ const Dashboard: React.FC = () => {
                   No recent jobs. Upload a resume to get started.
                 </Typography>
               ) : (
-                <Box>
+                <>
+                  {/* Group jobs by batch */}
                   {(() => {
-                    // Group jobs by batchId
-                    const batchMap = new Map<string, JobItem[]>();
-                    const singles: JobItem[] = [];
-                    for (const j of jobs) {
-                      if (j.batchId) {
-                        if (!batchMap.has(j.batchId)) batchMap.set(j.batchId, []);
-                        batchMap.get(j.batchId)!.push(j);
-                      } else {
-                        singles.push(j);
-                      }
-                    }
+                        const batchMap = new Map<string, JobItem[]>();
+                        const singleJobs: JobItem[] = [];
+                        
+                        // Paginate jobs
+                        const paginatedJobs = jobs.slice(jobsPage * jobsPerPage, (jobsPage + 1) * jobsPerPage);
+                        
+                        paginatedJobs.forEach(job => {
+                          if (job.batchId) {
+                            if (!batchMap.has(job.batchId)) {
+                              batchMap.set(job.batchId, []);
+                            }
+                            batchMap.get(job.batchId)!.push(job);
+                          } else {
+                            singleJobs.push(job);
+                          }
+                        });
 
-                    return (
-                      <Box>
+                        return (
+                          <Box>
                         {/* Render batch groups */}
                         {[...batchMap.entries()].map(([batchId, items]) => (
                           <Box key={batchId} sx={{ mb: 2 }}>
@@ -528,9 +536,9 @@ const Dashboard: React.FC = () => {
                         ))}
 
                         {/* Render single jobs */}
-                        {singles.length > 0 && (
+                        {singleJobs.length > 0 && (
                           <List>
-                            {singles.map((job) => {
+                            {singleJobs.map((job) => {
                               const index = jobs.findIndex(j => j.jobId === job.jobId);
                               return (
                                 <ListItem key={job.jobId} divider>
@@ -574,7 +582,28 @@ const Dashboard: React.FC = () => {
                       </Box>
                     );
                   })()}
-                </Box>
+                  
+                  {/* Pagination controls */}
+                  {jobs.length > jobsPerPage && (
+                    <Box sx={{ display: 'flex', justifyContent: 'center', mt: 2 }}>
+                      <Button 
+                        disabled={jobsPage === 0} 
+                        onClick={() => setJobsPage(p => p - 1)}
+                      >
+                        Previous
+                      </Button>
+                      <Typography sx={{ mx: 2, alignSelf: 'center' }}>
+                        Page {jobsPage + 1} of {Math.ceil(jobs.length / jobsPerPage)}
+                      </Typography>
+                      <Button 
+                        disabled={(jobsPage + 1) * jobsPerPage >= jobs.length}
+                        onClick={() => setJobsPage(p => p + 1)}
+                      >
+                        Next
+                      </Button>
+                    </Box>
+                  )}
+                </>
               )}
             </CardContent>
           </Card>

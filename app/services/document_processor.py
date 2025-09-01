@@ -18,6 +18,7 @@ from app.models.schemas import ExtractedData, ContactInfo, Experience, Education
 from app.services.nlp_extractor import NLPExtractor
 from app.services.ocr_processor import OCRProcessor
 from app.services.gemini_processor import GeminiProcessor
+from app.services.enhanced_gemini_processor import EnhancedGeminiProcessor
 import fitz  # PyMuPDF
 
 class DocumentProcessor:
@@ -29,9 +30,11 @@ class DocumentProcessor:
         self.nlp_extractor = NLPExtractor()
         self.ocr_processor = OCRProcessor()
         self.gemini_processor = None
+        self.enhanced_gemini_processor = None
         if gemini_api_key:
             try:
                 self.gemini_processor = GeminiProcessor(gemini_api_key)
+                self.enhanced_gemini_processor = EnhancedGeminiProcessor(gemini_api_key)
             except Exception as e:
                 logging.warning(f"Failed to initialize Gemini processor: {e}")
         
@@ -227,16 +230,52 @@ class DocumentProcessor:
         if use_gemini and (gemini_api_key or self.gemini_processor):
             try:
                 # Update API key if provided
-                if gemini_api_key and not self.gemini_processor:
-                    self.gemini_processor = GeminiProcessor(gemini_api_key)
-                elif gemini_api_key and self.gemini_processor:
-                    self.gemini_processor.update_api_key(gemini_api_key)
+                if gemini_api_key:
+                    if not self.enhanced_gemini_processor:
+                        self.enhanced_gemini_processor = EnhancedGeminiProcessor(gemini_api_key)
+                    else:
+                        self.enhanced_gemini_processor.update_api_key(gemini_api_key)
                 
-                # Use Gemini for extraction
-                logging.info("Using Gemini for resume extraction")
-                extracted_data = await self.gemini_processor.process_resume(text)
+                # Use Enhanced Gemini for extraction with dynamic categorization
+                logging.info("Using Enhanced Gemini for resume extraction with dynamic categorization")
+                enhanced = await self.enhanced_gemini_processor.extract_enhanced_data(text)
+
+                # Flatten skills to a simple list for ExtractedData.skills
+                skills_grouped = enhanced.get('skills_categories', {}) or {}
+                skills_flat = []
+                for _cat, items in skills_grouped.items():
+                    if isinstance(items, list):
+                        skills_flat.extend([str(x).strip() for x in items if str(x).strip()])
+                # De-duplicate while preserving order
+                seen = set()
+                skills_flat_unique = []
+                for s in skills_flat:
+                    if s.lower() not in seen:
+                        seen.add(s.lower())
+                        skills_flat_unique.append(s)
+
+                # Build ExtractedData with type-safe fields
+                extracted_data = ExtractedData(
+                    contact_info=ContactInfo(**(enhanced.get('contact_info') or {}), title=enhanced.get('title')),  # map title if present
+                    experience=[],  # keep legacy Experience list empty; use additional_data for detailed_experience
+                    education=[],   # table-like data goes to additional_data
+                    skills=skills_flat_unique,
+                    raw_text=text,
+                    confidence_score=0.9,
+                    tools_title=None,
+                    skills_grouped=skills_grouped,
+                    additional_data={
+                        'title': enhanced.get('title'),
+                        'summary_bullets': enhanced.get('summary_bullets', []),
+                        'detailed_experience': enhanced.get('detailed_experience', []),
+                        'other_notable_projects': enhanced.get('other_notable_projects', []),
+                        'education': enhanced.get('education', []),
+                        'certifications': enhanced.get('certifications', []),
+                        'attempt_count': enhanced.get('attempt_count', 1)
+                    }
+                )
             except Exception as e:
-                logging.error(f"Gemini extraction failed: {e}")
+                logging.error(f"Enhanced Gemini extraction failed: {e}")
                 # Fallback to traditional extraction
                 extracted_data = self.advanced_data_extraction(text)
         else:

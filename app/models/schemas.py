@@ -62,6 +62,7 @@ class ExtractedData(BaseModel):
     # Additional structured fields for template rendering
     tools_title: Optional[str] = None
     skills_grouped: Dict[str, List[str]] = {}
+    additional_data: Optional[Dict[str, Any]] = None  # Store enhanced extraction data
 
 class TemplateInfo(BaseModel):
     """Template information model"""
@@ -74,21 +75,24 @@ class TemplateInfo(BaseModel):
     updated_at: datetime = Field(default_factory=datetime.now)
 
 class ProcessingJob(BaseModel):
-    """Processing job model"""
+    """Job processing model"""
     job_id: str
-    status: JobStatus = JobStatus.PENDING
+    status: JobStatus
     template_id: str
     original_filename: str
-    extracted_data: Optional[ExtractedData] = None
     output_filename: Optional[str] = None
     error_message: Optional[str] = None
-    warnings: List[str] = []
-    created_at: datetime = Field(default_factory=datetime.now)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    # Set by processor when a job reaches a terminal state
     completed_at: Optional[datetime] = None
     processing_time: Optional[float] = None
-    # LLM processing options
+    # Collected non-fatal issues from template rendering
+    warnings: Optional[List[str]] = None
+    extracted_data: Optional[ExtractedData] = None
     use_gemini: bool = False
     gemini_api_key: Optional[str] = None
+    attempt_count: int = 0  # Track number of processing attempts
 
 class JobResponse(BaseModel):
     """Job response model"""

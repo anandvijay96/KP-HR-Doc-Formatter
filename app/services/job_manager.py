@@ -35,7 +35,8 @@ class JobManager:
             template_id=template_id,
             original_filename=filename,
             use_gemini=use_gemini,
-            gemini_api_key=gemini_api_key
+            gemini_api_key=gemini_api_key,
+            attempt_count=0  # Initialize attempt counter
         )
         
         # Store job in Redis
@@ -87,9 +88,16 @@ class JobManager:
     
     async def process_job(self, job_id: str):
         """Process a job asynchronously"""
+        job = await self.get_job(job_id)
+        if not job:
+            return
+        
         try:
-            # Update status to processing
-            await self.update_job_status(job_id, JobStatus.PROCESSING)
+            # Increment attempt counter
+            job.attempt_count = getattr(job, 'attempt_count', 0) + 1
+            
+            # Update job status to processing with incremented attempt count
+            await self.update_job_status(job_id, JobStatus.PROCESSING, attempt_count=job.attempt_count)
             
             job = await self.get_job(job_id)
             if not job:

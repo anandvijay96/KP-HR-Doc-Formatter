@@ -8,6 +8,9 @@ import json
 from datetime import datetime
 import logging
 import re
+import shutil
+import importlib.util
+from importlib.machinery import SourceFileLoader
 
 from app.core.config import settings
 from app.models.schemas import ExtractedData, TemplateInfo
@@ -135,6 +138,23 @@ class TemplateEngine:
                 version="1.0",
                 fields=["contact_info", "summary", "summary_bullets", "experience", "education", "skills"]
             )
+        elif template_id == "ezest-coded":
+            return TemplateInfo(
+                id="ezest-coded",
+                name="e-Zest Coded Template",
+                description="Template generated entirely via Python (tables and formatting coded)",
+                version="1.0",
+                fields=[
+                    "contact_info",
+                    "summary",
+                    "summary_bullets",
+                    "experience",
+                    "education",
+                    "skills",
+                    "other_projects",
+                    "certifications_rows"
+                ]
+            )
         
         # Check for custom templates
         template_path = self.templates_dir / f"{template_id}.docx"
@@ -150,53 +170,140 @@ class TemplateEngine:
         return None
     
     def list_templates(self) -> List[TemplateInfo]:
-        """List only the main template to simplify debugging."""
-        # Only create template if it doesn't exist (prevent overwriting user edits)
+        """List available templates; ensure primary ones exist but never overwrite user edits."""
+        # Ensure the updated bullets template exists
         main_path = self.templates_dir / "ezest-updated.docx"
         if not main_path.exists():
             try:
                 self._ensure_ezest_updated_bullets_template()
             except Exception:
                 pass
-        
+
+        # Ensure the code-generated template exists (created on demand)
+        coded_path = self.templates_dir / "ezest-coded.docx"
+        if not coded_path.exists():
+            try:
+                self._ensure_ezest_coded_template()
+            except Exception:
+                # Non-fatal; simply don't list it if creation failed
+                pass
+
         templates: List[TemplateInfo] = []
-        main_path = self.templates_dir / "ezest-updated.docx"
         if main_path.exists():
             main = self.get_template_info("ezest-updated")
             if main:
                 templates.append(main)
+        if coded_path.exists():
+            coded = self.get_template_info("ezest-coded")
+            if coded:
+                templates.append(coded)
         return templates
+
+    def _ensure_ezest_coded_template(self) -> None:
+        """Create or refresh the code-generated ezest-coded.docx using
+        templates/ezest-code-gen/ezest_cv_generator.py if present.
+
+        Behavior:
+        - If target doesn't exist, generate it.
+        - If target exists but generator file is newer, regenerate (safe overwrite).
+        - Otherwise, no-op.
+        """
+        target = self.templates_dir / "ezest-coded.docx"
+        # Path of the user-editable generator
+        gen_path = (Path(__file__).resolve().parents[2] / "templates" / "ezest-code-gen" / "ezest_cv_generator.py")
+        if not gen_path.exists():
+            logging.warning("Generator not found at templates/ezest-code-gen/ezest_cv_generator.py; skipping coded template creation")
+            return
+
+        # If target exists and is newer than generator, skip regeneration
+        try:
+            if target.exists():
+                if target.stat().st_mtime >= gen_path.stat().st_mtime:
+                    return
+        except Exception:
+            # If stat fails for any reason, proceed to attempt regeneration
+            pass
+        try:
+            spec = importlib.util.spec_from_loader("ezest_cv_generator", SourceFileLoader("ezest_cv_generator", str(gen_path)))
+            if spec is None or spec.loader is None:
+                logging.warning("Could not load ezest_cv_generator spec")
+                return
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)  # type: ignore
+            if hasattr(module, "EZestCVTemplateGenerator"):
+                Generator = getattr(module, "EZestCVTemplateGenerator")
+                generator = Generator()
+                generator.create_complete_template(target)
+                logging.info("(Re)created code-generated template ezest-coded.docx from templates/ezest-code-gen/ezest_cv_generator.py")
+            else:
+                logging.warning("EZestCVTemplateGenerator not found in ezest_cv_generator module")
+        except Exception as e:
+            logging.error(f"Failed to create ezest-coded template: {e}")
     
     def apply_template(self, extracted_data: ExtractedData, template_id: str) -> str:
         """Apply template to extracted data and generate formatted document"""
         try:
             self.last_warnings = []
             template_path = self.templates_dir / f"{template_id}.docx"
-            
+
             if not template_path.exists():
                 raise FileNotFoundError(f"Template not found: {template_id}")
-            
-            # Load template
-            template = DocxTemplate(template_path)
-            
-            # Prepare context data
+
+            # Prepare context data first (used both for population and rendering)
             context = self._prepare_template_context(extracted_data)
-            
             # Simple required content checks and warnings
             self._collect_warnings(context)
-            
+
+            # If this is the code-generated template, pre-populate rows before rendering
+            if template_id == "ezest-coded":
+                # Copy template to a temp path for in-place population prior to docxtpl rendering
+                temp_filename = f"_tmp_{uuid.uuid4().hex[:8]}_{template_id}.docx"
+                temp_path = self.output_dir / temp_filename
+                shutil.copyfile(template_path, temp_path)
+
+                # Load the temp document and populate tables based on headers
+                doc = Document(temp_path)
+                try:
+                    gen_path = (Path(__file__).resolve().parents[2] / "templates" / "ezest-code-gen" / "ezest_cv_generator.py")
+                    spec = importlib.util.spec_from_loader("ezest_cv_generator", SourceFileLoader("ezest_cv_generator", str(gen_path)))
+                    if spec and spec.loader:
+                        module = importlib.util.module_from_spec(spec)
+                        spec.loader.exec_module(module)  # type: ignore
+                        if hasattr(module, "EZestCVTemplateGenerator"):
+                            Generator = getattr(module, "EZestCVTemplateGenerator")
+                            generator = Generator()
+                            # Populate sections by header markers
+                            generator.populate_skills(doc, context.get('skills_rows', []))
+                            generator.populate_other_projects(doc, context.get('other_projects', []))
+                            generator.populate_education(doc, context.get('education', []))
+                            generator.populate_certifications(doc, context.get('certifications_rows', []))
+                        else:
+                            logging.warning("EZestCVTemplateGenerator not found; skipping row population")
+                    else:
+                        logging.warning("Could not load ezest_cv_generator spec; skipping row population")
+                except Exception as e:
+                    logging.warning(f"Row population step failed, proceeding with plain rendering: {e}")
+                # Save populated temp doc
+                doc.save(temp_path)
+
+                # Now render with docxtpl using the populated temp doc
+                template = DocxTemplate(temp_path)
+            else:
+                # Non-coded templates: render directly
+                template = DocxTemplate(template_path)
+
             # Render template
             template.render(context)
-            
+
             # Generate output filename
             output_filename = f"formatted_{uuid.uuid4().hex[:8]}_{template_id}.docx"
             output_path = self.output_dir / output_filename
-            
+
             # Save rendered document
             template.save(output_path)
-            
+
             return output_filename
-            
+
         except Exception as e:
             logging.error(f"Template application failed: {str(e)}")
             raise ValueError(f"Failed to apply template: {str(e)}")
@@ -204,7 +311,16 @@ class TemplateEngine:
     def _prepare_template_context(self, extracted_data: ExtractedData) -> Dict[str, Any]:
         """Prepare context data for template rendering"""
         # Bulletize summary into list items suitable for templating
-        bullets = self._bulletize_summary(extracted_data.summary or '')
+        # Prefer LLM-provided bullets if available in additional_data
+        addl = getattr(extracted_data, 'additional_data', {}) or {}
+        llm_bullets = addl.get('summary_bullets') if isinstance(addl, dict) else None
+        if llm_bullets and isinstance(llm_bullets, list) and any(str(b).strip() for b in llm_bullets):
+            bullets = [str(b).strip() for b in llm_bullets if str(b).strip()]
+            # Also synthesize a plain summary text for any template using a text block
+            synthesized_summary = '; '.join(bullets)
+        else:
+            bullets = self._bulletize_summary(extracted_data.summary or '')
+            synthesized_summary = extracted_data.summary or ''
         # Build Tools & Technologies helpers
         skills_grouped = getattr(extracted_data, 'skills_grouped', {}) or {}
         tools_title = getattr(extracted_data, 'tools_title', None) or 'Professional Skills'
@@ -233,6 +349,42 @@ class TemplateEngine:
         # Title: ensure empty string if missing so no stray characters render
         safe_title = (getattr(extracted_data.contact_info, 'title', None) or '').strip()
 
+        # Build simple rows for Other Notable Projects / Education / Certifications (for templates expecting simple loops)
+        simple_other_projects: List[Dict[str, Any]] = []
+        for p in addl.get('other_notable_projects', []) or []:
+            try:
+                # Normalize technologies to list of strings; join in template
+                techs = p.get('technologies') or p.get('technology') or []
+                if isinstance(techs, str):
+                    techs = [techs]
+                simple_other_projects.append({
+                    'name': p.get('project_name') or p.get('name') or '',
+                    'duration': p.get('duration') or '',
+                    'technologies': [str(x).strip() for x in techs if str(x).strip()],
+                })
+            except Exception:
+                continue
+
+        simple_education: List[Dict[str, Any]] = []
+        for e in addl.get('education', []) or []:
+            try:
+                simple_education.append({
+                    'degree': e.get('degree') or e.get('course') or '',
+                    'institution': e.get('institution') or e.get('university') or e.get('board') or '',
+                    'graduation_date': e.get('year') or e.get('graduation_date') or '',
+                })
+            except Exception:
+                continue
+
+        simple_cert_rows: List[Dict[str, Any]] = []
+        c_list = addl.get('certifications', []) or []
+        for i, c in enumerate(c_list, start=1):
+            try:
+                authority = c.get('issuer') or c.get('authority') or c.get('name') or ''
+                simple_cert_rows.append({'sno': i, 'authority': authority})
+            except Exception:
+                continue
+
         context = {
             'contact_info': {
                 'name': extracted_data.contact_info.name or 'N/A',
@@ -243,10 +395,12 @@ class TemplateEngine:
                 'website': extracted_data.contact_info.website or '',
                 'title': safe_title
             },
-            'summary': extracted_data.summary or 'Professional summary not available.',
+            # Keep previous behavior: prefer bullet list; also provide a reasonable text fallback
+            'summary': synthesized_summary or 'Professional summary not available.',
             'summary_bullets': bullets,
             'experience': [],
-            'education': [],
+            # Backward-compatible education loop and new alias
+            'education': simple_education,
             'skills': extracted_data.skills or [],
             'tools_title': tools_title,
             'skills_grouped': skills_grouped,
@@ -254,10 +408,76 @@ class TemplateEngine:
             'skills_left_lines': skills_left_lines,
             'skills_right_lines': skills_right_lines,
             # Row-wise pairs for docxtpl row loop
-            'skills_rows': skills_rows
+            'skills_rows': skills_rows,
+            # Enhanced variables exposed for templates that use the new structure
+            'detailed_experience': addl.get('detailed_experience', []),
+            'other_notable_projects': addl.get('other_notable_projects', []),
+            'education_table': addl.get('education', []),
+            'certifications': addl.get('certifications', []),
+            # Simple aliases to match the user's current template
+            'other_projects': simple_other_projects,
+            'certifications_rows': simple_cert_rows,
         }
         
         # Process experience data
+        # If enhanced detailed_experience is available, map it to the legacy 'experience' loop format
+        enhanced_exps = addl.get('detailed_experience') if isinstance(addl, dict) else None
+        if isinstance(enhanced_exps, list) and enhanced_exps:
+            for e in enhanced_exps:
+                try:
+                    duration = str(e.get('duration') or '').strip()
+                    start_date = ''
+                    end_date = ''
+                    if ' - ' in duration:
+                        start_date, end_date = [s.strip() for s in duration.split(' - ', 1)]
+                    elif duration:
+                        start_date = duration
+                    techs = e.get('technologies_used') or e.get('technology') or []
+                    if isinstance(techs, str):
+                        techs = [techs]
+                    achievements = e.get('key_achievements') or []
+                    if isinstance(achievements, str):
+                        achievements = [achievements]
+                    # Prefer explicit project description field; otherwise synthesize from first achievement
+                    proj_desc = e.get('project_description') or e.get('description') or ''
+                    if not proj_desc and achievements:
+                        proj_desc = achievements[0]
+                    context['experience'].append({
+                        'title': e.get('project_name') or e.get('title') or 'Project',
+                        'company': e.get('organization') or e.get('company') or '',
+                        'location': e.get('location') or '',
+                        'start_date': start_date or '—',
+                        'end_date': end_date or 'Present',
+                        'description': proj_desc or '',
+                        'project_description': proj_desc or '',
+                        'technologies': [str(x) for x in techs if str(x).strip()],
+                        'responsibilities': [str(x).strip() for x in achievements if str(x).strip()],
+                        'is_current': True if (end_date.lower() == 'present') else False
+                    })
+                except Exception:
+                    continue
+            # Build overflow -> other_projects (items beyond top 5)
+            try:
+                overflow = enhanced_exps[5:] if len(enhanced_exps) > 5 else []
+                extra_rows = []
+                for p in overflow:
+                    dur = p.get('duration') or ''
+                    techs = p.get('technologies_used') or p.get('technology') or []
+                    if isinstance(techs, str):
+                        techs = [techs]
+                    extra_rows.append({
+                        'name': p.get('project_name') or p.get('title') or '',
+                        'duration': dur,
+                        'technologies': [str(x).strip() for x in techs if str(x).strip()]
+                    })
+                # Merge with any existing simple rows derived earlier or from LLM other_notable_projects
+                existing_rows = context.get('other_projects') or []
+                context['other_projects'] = (existing_rows + extra_rows) if extra_rows else existing_rows
+            except Exception:
+                pass
+            # After mapping enhanced format, skip legacy parsing below
+            return context
+
         # Build a lightweight vocabulary from provided skills/groups
         skills_vocab: set = set()
         try:
