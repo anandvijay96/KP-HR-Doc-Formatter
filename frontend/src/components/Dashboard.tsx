@@ -19,6 +19,7 @@ import {
   InputLabel,
   Select,
   MenuItem,
+  Skeleton,
 } from '@mui/material';
 import {
   CloudUpload as UploadIcon,
@@ -45,6 +46,7 @@ const Dashboard: React.FC = () => {
   const [selectedTemplate, setSelectedTemplate] = useState<string>('ezest-updated');
   const [jobs, setJobs] = useState<JobItem[]>([]);
   const [loading, setLoading] = useState(false);
+  const [templatesLoading, setTemplatesLoading] = useState(true);
   const [downloadingAll, setDownloadingAll] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
@@ -96,11 +98,18 @@ const Dashboard: React.FC = () => {
 
   const loadTemplates = async () => {
     try {
+      setTemplatesLoading(true);
       const templatesData = await getTemplates();
       setTemplates(templatesData);
+      // If current selection is not in fetched list, default to first template
+      if (templatesData.length > 0 && !templatesData.find(t => t.id === selectedTemplate)) {
+        setSelectedTemplate(templatesData[0].id);
+      }
     } catch (err) {
       console.error('Failed to load templates:', err);
       setError('Failed to load templates');
+    } finally {
+      setTemplatesLoading(false);
     }
   };
 
@@ -351,17 +360,27 @@ const Dashboard: React.FC = () => {
               
               <FormControl fullWidth sx={{ mb: 3 }}>
                 <InputLabel>Template</InputLabel>
-                <Select
-                  value={selectedTemplate}
-                  label="Template"
-                  onChange={(e) => setSelectedTemplate(e.target.value)}
-                >
-                  {templates.map((template) => (
-                    <MenuItem key={template.id} value={template.id}>
-                      {template.name}
-                    </MenuItem>
-                  ))}
-                </Select>
+                {templatesLoading ? (
+                  <Skeleton variant="rounded" height={56} />
+                ) : (
+                  <Select
+                    value={selectedTemplate}
+                    label="Template"
+                    onChange={(e) => setSelectedTemplate(e.target.value)}
+                  >
+                    {templates.length === 0 ? (
+                      <MenuItem value={selectedTemplate} disabled>
+                        No templates available
+                      </MenuItem>
+                    ) : (
+                      templates.map((template) => (
+                        <MenuItem key={template.id} value={template.id}>
+                          {template.name}
+                        </MenuItem>
+                      ))
+                    )}
+                  </Select>
+                )}
               </FormControl>
 
               <FileUpload

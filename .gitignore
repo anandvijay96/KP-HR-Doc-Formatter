@@ -87,3 +87,6 @@ deploy-sa-key.json
 *.sa.key.json
 *.gcp-key.json
 *.service-account.json
+
+# Project docs to ignore
+ENHANCEMENT_SUMMARY.md
